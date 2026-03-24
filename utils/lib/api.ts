@@ -17,6 +17,8 @@ import {
   AnalysisRun,
   ProcessVideoRequest,
   ReportRow,
+  VerticalLeapRun,
+  ProcessVerticalLeapRequest,
 } from "../types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -265,6 +267,39 @@ export const api = {
     });
     return handleResponse<AnalysisRunWithPoints>(response);
   },
+
+  async processVerticalLeap(
+  token: string,
+  videoId: number,
+  heightCm: number
+): Promise<{ message: string; run: VerticalLeapRun }> {
+  const response = await fetch(`${API_URL}/videos/${videoId}/process-vertical-leap`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ analysis_type: "vertical-leap", height_cm: heightCm }),
+  });
+  return handleResponse<{ message: string; run: VerticalLeapRun }>(response);
+},
+
+async getLatestVerticalLeap(
+  token: string,
+  videoId: number
+): Promise<VerticalLeapRun> {
+  const response = await fetch(`${API_URL}/videos/${videoId}/vertical-leap/latest`, {
+    headers: authHeaders(token),
+  });
+  return handleResponse<VerticalLeapRun>(response);
+},
+
+async getVerticalLeapRun(
+  token: string,
+  runId: number
+): Promise<VerticalLeapRun> {
+  const response = await fetch(`${API_URL}/analysis/vertical-leap/${runId}`, {
+    headers: authHeaders(token),
+  });
+  return handleResponse<VerticalLeapRun>(response);
+},
 
   // ── Reports ───────────────────────────────────────────────
 

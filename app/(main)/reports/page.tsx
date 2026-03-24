@@ -17,23 +17,15 @@ const formatDate = (iso: string) =>
 
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
-const ANALYSIS_LABEL: Record<AnalysisType, string> = {
+const ANALYSIS_LABEL: Record<string, string> = {
   "fly-run": "Fly Run",
   "vertical-leap": "Vertical Leap",
 };
 
-const ANALYSIS_TAG_COLOR: Record<AnalysisType, string> = {
+const ANALYSIS_TAG_COLOR: Record<string, string> = {
   "fly-run": "bg-blue-100 text-blue-700",
-  "vertical-leap": "bg-purple-100 text-purple-700",
+  "vertical-leap": "bg-emerald-100 text-emerald-700",
 };
-
-const TAG_COLORS: string[] = [
-  "bg-purple-100 text-purple-700",
-  "bg-blue-100 text-blue-700",
-  "bg-pink-100 text-pink-700",
-  "bg-indigo-100 text-indigo-700",
-  "bg-violet-100 text-violet-700",
-];
 
 // ── Icons ──────────────────────────────────────────────────
 
@@ -63,18 +55,45 @@ const ChartIcon = () => (
   </svg>
 );
 
+const LeapIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+    <polyline points="17 11 12 6 7 11" />
+    <polyline points="17 18 12 13 7 18" />
+  </svg>
+);
+
 // ── Column definitions ─────────────────────────────────────
 
 const COLUMNS = [
   "REPORT NAME",
   "VIDEO",
   "ANALYSIS TYPE",
-  "MAX SPEED",
-  "AVG SPEED",
-  "MIN SPEED",
+  "RESULT",
   "DATE",
   "ACTION",
 ];
+
+// ── Result cell — renders differently per report type ──────
+
+function ResultCell({ report }: { report: ReportRow }) {
+  if (report.report_type === "vertical-leap") {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-semibold text-emerald-600">
+          {round2(report.jump_height_cm ?? 0)} cm
+          <span className="text-xs font-normal text-gray-400 ml-1">jump</span>
+        </span>
+        <span className="text-xs text-gray-400">
+          {round2(report.flight_time_s ?? 0)} s flight
+        </span>
+      </div>
+    );
+  }
+  // fly-run — no speed data in merged row, just show type indicator
+  return (
+    <span className="text-sm text-gray-400 italic">Speed analysis</span>
+  );
+}
 
 // ── Component ──────────────────────────────────────────────
 
@@ -86,7 +105,6 @@ export default function Reports() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [unit, setUnit] = useState<"kmh" | "ms">("kmh");
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [refreshing, setRefreshing] = useState(false);
@@ -116,20 +134,11 @@ export default function Reports() {
   const filtered = reports.filter(
     (r) =>
       r.original_name.toLowerCase().includes(q) ||
-      ANALYSIS_LABEL[r.analysis_type].toLowerCase().includes(q)
+      ANALYSIS_LABEL[r.report_type].toLowerCase().includes(q)
   );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const paginated = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
-
-  const getSpeed = (r: ReportRow, type: "max" | "avg" | "min") => {
-    if (unit === "kmh") {
-      return type === "max" ? r.max_speed_kmh : type === "avg" ? r.avg_speed_kmh : r.min_speed_kmh;
-    }
-    return type === "max" ? r.max_speed_ms : type === "avg" ? r.avg_speed_ms : r.min_speed_ms;
-  };
-
-  const unitSuffix = unit === "kmh" ? "km/h" : "m/s";
 
   // ── Render ───────────────────────────────────────────────
 
@@ -152,19 +161,19 @@ export default function Reports() {
               {refreshing ? "Refreshing…" : "Refresh Report List"}
             </button>
 
-            {/* Unit toggle */}
-            <div className="flex items-center bg-gray-100 rounded-xl p-1">
-              {(["kmh", "ms"] as const).map((u) => (
+            {/* Filter chips */}
+            <div className="flex items-center gap-2">
+              {(["all", "fly-run", "vertical-leap"] as const).map((f) => (
                 <button
-                  key={u}
-                  onClick={() => setUnit(u)}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    unit === u
-                      ? "bg-white text-violet-600 shadow-sm"
-                      : "text-gray-400 hover:text-gray-600"
+                  key={f}
+                  onClick={() => { setSearch(f === "all" ? "" : f === "fly-run" ? "Fly Run" : "Vertical Leap"); setCurrentPage(1); }}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                    (f === "all" && search === "") || search === f
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-white text-gray-500 border-gray-200 hover:border-violet-300 hover:text-violet-600"
                   }`}
                 >
-                  {u === "kmh" ? "km/h" : "m/s"}
+                  {f === "all" ? "All" : ANALYSIS_LABEL[f]}
                 </button>
               ))}
             </div>
@@ -246,12 +255,12 @@ export default function Reports() {
                 ) : (
                   paginated.map((report, i) => (
                     <tr
-                      key={report.run_id}
+                      key={`${report.report_type}-${report.run_id}`}
                       className={`border-b border-gray-100 transition-colors hover:bg-purple-50/40 ${
                         i % 2 === 0 ? "bg-white" : "bg-gray-50/50"
                       }`}
                     >
-                      {/* Report name: video name + analysis type */}
+                      {/* Report name */}
                       <td className="px-4 py-4 font-medium text-[#7C3AED] whitespace-nowrap">
                         {report.original_name}
                         <span className="ml-1.5 text-xs text-gray-400 font-normal">
@@ -266,24 +275,14 @@ export default function Reports() {
 
                       {/* Analysis type tag */}
                       <td className="px-4 py-4">
-                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ANALYSIS_TAG_COLOR[report.analysis_type]}`}>
-                          {ANALYSIS_LABEL[report.analysis_type]}
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ANALYSIS_TAG_COLOR[report.report_type]}`}>
+                          {ANALYSIS_LABEL[report.report_type]}
                         </span>
                       </td>
 
-                      {/* Max speed */}
-                      <td className="px-4 py-4 tabular-nums font-semibold text-emerald-600">
-                        {round2(getSpeed(report, "max"))} <span className="text-xs font-normal text-gray-400">{unitSuffix}</span>
-                      </td>
-
-                      {/* Avg speed */}
-                      <td className="px-4 py-4 tabular-nums font-semibold text-blue-600">
-                        {round2(getSpeed(report, "avg"))} <span className="text-xs font-normal text-gray-400">{unitSuffix}</span>
-                      </td>
-
-                      {/* Min speed */}
-                      <td className="px-4 py-4 tabular-nums font-semibold text-violet-600">
-                        {round2(getSpeed(report, "min"))} <span className="text-xs font-normal text-gray-400">{unitSuffix}</span>
+                      {/* Result — varies by type */}
+                      <td className="px-4 py-4">
+                        <ResultCell report={report} />
                       </td>
 
                       {/* Date */}
@@ -291,18 +290,20 @@ export default function Reports() {
                         {formatDate(report.created_at)}
                       </td>
 
-                      {/* Action */}
+                      {/* Action — routes to correct page per type */}
                       <td className="px-4 py-4">
                         <button
-                          onClick={() =>
-                            router.push(
-                              `/videos/analysis?id=${report.video_id}&runId=${report.run_id}`
-                            )
-                          }
+                          onClick={() => {
+                            if (report.report_type === "vertical-leap") {
+                              router.push(`/videos/vertical-leap?id=${report.video_id}&runId=${report.run_id}`);
+                            } else {
+                              router.push(`/videos/analysis?id=${report.video_id}&runId=${report.run_id}`);
+                            }
+                          }}
                           className="flex items-center gap-2 text-xs font-bold tracking-widest uppercase px-4 py-2 rounded-full border-2 border-[#8B5CF6] text-[#8B5CF6] hover:bg-[#8B5CF6] hover:text-white transition-all whitespace-nowrap"
                         >
-                          <ChartIcon />
-                          View Analysis
+                          {report.report_type === "vertical-leap" ? <LeapIcon /> : <ChartIcon />}
+                          View Results
                         </button>
                       </td>
                     </tr>
@@ -343,7 +344,6 @@ export default function Reports() {
                 className="w-8 h-8 flex items-center justify-center rounded-full text-sm text-gray-400 hover:text-purple-600 hover:bg-purple-50 disabled:opacity-30 transition-colors"
               >‹</button>
 
-              {/* Page number pills */}
               {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                 const mid = Math.min(Math.max(currentPage, 3), totalPages - 2);
                 const page = totalPages <= 5 ? i + 1 : mid - 2 + i;

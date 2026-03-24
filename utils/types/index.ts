@@ -137,12 +137,27 @@ export interface ReportRow {
   run_id: number;
   video_id: number;
   original_name: string;
-  analysis_type: AnalysisType;
-  max_speed_ms: number;
-  min_speed_ms: number;
-  avg_speed_ms: number;
-  max_speed_kmh: number;
-  min_speed_kmh: number;
-  avg_speed_kmh: number;
+  report_type: "fly-run" | "vertical-leap";
+  // vertical-leap only — present when report_type === "vertical-leap"
+  height_cm?: number;
+  jump_height_cm?: number;
+  flight_time_s?: number;
   created_at: string;
+}
+
+export interface VerticalLeapRun {
+  id: number;
+  video_id: number;
+  user_id: number;
+  status: AnalysisStatus;
+  error_message?: string;
+  height_cm: number;
+  jump_height_cm: number;
+  flight_time_s: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProcessVerticalLeapRequest {
+  height_cm: number;
 }
