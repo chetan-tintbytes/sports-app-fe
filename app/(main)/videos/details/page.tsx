@@ -86,6 +86,7 @@ function ProcessModal({
           {([
             { type: "fly-run" as AnalysisType, label: "Fly Run", description: "Analyse sprint speed over time" },
             { type: "vertical-leap" as AnalysisType, label: "Vertical Leap", description: "Measure jump height and flight time" },
+            { type: "fly-run2" as AnalysisType, label: "Acceleration / Deceleration", description: "Analyse sprint acceleration / deceleration" },
           ]).map((opt) => (
             <button
               key={opt.type}
