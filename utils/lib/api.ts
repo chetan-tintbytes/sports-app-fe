@@ -3,6 +3,7 @@ import {
   SignupRequest,
   LoginResponse,
   User,
+  UpdateProfileRequest,
   ForgotPasswordRequest,
   ResetPasswordRequest,
   FolderTree,
@@ -19,6 +20,18 @@ import {
   ReportRow,
   VerticalLeapRun,
   ProcessVerticalLeapRequest,
+  HorizontalJumpRun,
+  StepLengthRun,
+  LateralShuffleRun,
+  Organisation,
+  OrgGroup,
+  Member,
+  MemberStats,
+  CreateMemberRequest,
+  UpdateMemberRequest,
+  ProfileImagePresignResponse,
+  CreateGroupRequest,
+  UpdateGroupRequest,
 } from "../types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -75,6 +88,27 @@ export const api = {
     return handleResponse<User>(response);
   },
 
+  async updateProfile(token: string, data: UpdateProfileRequest): Promise<User> {
+    const response = await fetch(`${API_URL}/profile`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<User>(response);
+  },
+
+  async presignUserProfileImage(
+    token: string,
+    data: { content_type: string; filename: string }
+  ): Promise<ProfileImagePresignResponse> {
+    const response = await fetch(`${API_URL}/profile/image/presign`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<ProfileImagePresignResponse>(response);
+  },
+
   async forgotPassword(data: ForgotPasswordRequest): Promise<{ message: string }> {
     const response = await fetch(`${API_URL}/forgot-password`, {
       method: "POST",
@@ -93,6 +127,31 @@ export const api = {
     return handleResponse<{ message: string }>(response);
   },
 
+  // ── S3 direct upload (shared for member + user profile images) ────────────
+
+  async uploadToS3(
+    presignedUrl: string,
+    file: File,
+    onProgress?: (pct: number) => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", presignedUrl, true);
+      xhr.setRequestHeader("Content-Type", file.type);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100));
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`S3 upload failed: ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error("S3 upload network error"));
+      xhr.send(file);
+    });
+  },
+
   // ── Folders ───────────────────────────────────────────────
 
   async getFolders(token: string): Promise<FolderTree> {
@@ -109,10 +168,7 @@ export const api = {
     return handleResponse<FolderContents>(response);
   },
 
-  async createFolder(
-    token: string,
-    data: { name: string; parent_id: number | null }
-  ): Promise<Folder> {
+  async createFolder(token: string, data: { name: string; parent_id: number | null }): Promise<Folder> {
     const response = await fetch(`${API_URL}/folders`, {
       method: "POST",
       headers: authHeaders(token),
@@ -158,29 +214,6 @@ export const api = {
     return handleResponse<PresignResponse>(response);
   },
 
-  async uploadToS3(
-    presignedUrl: string,
-    file: File,
-    onProgress?: (pct: number) => void
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", presignedUrl, true);
-      xhr.setRequestHeader("Content-Type", file.type);
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable && onProgress) {
-          onProgress(Math.round((e.loaded / e.total) * 100));
-        }
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error(`S3 upload failed: ${xhr.status}`));
-      };
-      xhr.onerror = () => reject(new Error("S3 upload network error"));
-      xhr.send(file);
-    });
-  },
-
   async getAllVideos(token: string): Promise<{ videos: Video[] }> {
     const response = await fetch(`${API_URL}/videos`, {
       headers: authHeaders(token),
@@ -221,13 +254,9 @@ export const api = {
     return handleResponse<{ message: string }>(response);
   },
 
-  // ── Analysis ──────────────────────────────────────────────
+  // ── Analysis — fly run ────────────────────────────────────
 
-  async processVideo(
-    token: string,
-    videoId: number,
-    data: ProcessVideoRequest
-  ): Promise<{ message: string; run: AnalysisRun }> {
+  async processVideo(token: string, videoId: number, data: ProcessVideoRequest): Promise<{ message: string; run: AnalysisRun }> {
     const response = await fetch(`${API_URL}/videos/${videoId}/process`, {
       method: "POST",
       headers: authHeaders(token),
@@ -236,70 +265,126 @@ export const api = {
     return handleResponse<{ message: string; run: AnalysisRun }>(response);
   },
 
-  async getLatestAnalysis(
-    token: string,
-    videoId: number,
-    type: AnalysisType
-  ): Promise<AnalysisRunWithPoints> {
-    const response = await fetch(
-      `${API_URL}/videos/${videoId}/analysis/latest?type=${type}`,
-      { headers: authHeaders(token) }
-    );
+  async getLatestAnalysis(token: string, videoId: number, type: AnalysisType): Promise<AnalysisRunWithPoints> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/analysis/latest?type=${type}`, {
+      headers: authHeaders(token),
+    });
     return handleResponse<AnalysisRunWithPoints>(response);
   },
 
-  async getAllAnalysisRuns(
-    token: string,
-    videoId: number
-  ): Promise<{ runs: AnalysisRun[] }> {
+  async getAllAnalysisRuns(token: string, videoId: number): Promise<{ runs: AnalysisRun[] }> {
     const response = await fetch(`${API_URL}/videos/${videoId}/analysis`, {
       headers: authHeaders(token),
     });
     return handleResponse<{ runs: AnalysisRun[] }>(response);
   },
 
-  async getAnalysisRun(
-    token: string,
-    runId: number
-  ): Promise<AnalysisRunWithPoints> {
+  async getAnalysisRun(token: string, runId: number): Promise<AnalysisRunWithPoints> {
     const response = await fetch(`${API_URL}/analysis/runs/${runId}`, {
       headers: authHeaders(token),
     });
     return handleResponse<AnalysisRunWithPoints>(response);
   },
 
-  async processVerticalLeap(
-  token: string,
-  videoId: number,
-  heightCm: number
-): Promise<{ message: string; run: VerticalLeapRun }> {
-  const response = await fetch(`${API_URL}/videos/${videoId}/process-vertical-leap`, {
-    method: "POST",
-    headers: authHeaders(token),
-    body: JSON.stringify({ analysis_type: "vertical-leap", height_cm: heightCm }),
-  });
-  return handleResponse<{ message: string; run: VerticalLeapRun }>(response);
-},
+  // ── Analysis — vertical leap ──────────────────────────────
 
-async getLatestVerticalLeap(
-  token: string,
-  videoId: number
-): Promise<VerticalLeapRun> {
-  const response = await fetch(`${API_URL}/videos/${videoId}/vertical-leap/latest`, {
-    headers: authHeaders(token),
-  });
-  return handleResponse<VerticalLeapRun>(response);
-},
+  async processVerticalLeap(token: string, videoId: number, heightCm: number): Promise<{ message: string; run: VerticalLeapRun }> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/process-vertical-leap`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ analysis_type: "vertical-leap", height_cm: heightCm }),
+    });
+    return handleResponse<{ message: string; run: VerticalLeapRun }>(response);
+  },
 
-async getVerticalLeapRun(
-  token: string,
-  runId: number
-): Promise<VerticalLeapRun> {
-  const response = await fetch(`${API_URL}/analysis/vertical-leap/${runId}`, {
-    headers: authHeaders(token),
-  });
-  return handleResponse<VerticalLeapRun>(response);
-},
+  async getLatestVerticalLeap(token: string, videoId: number): Promise<VerticalLeapRun> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/vertical-leap/latest`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<VerticalLeapRun>(response);
+  },
+
+  async getVerticalLeapRun(token: string, runId: number): Promise<VerticalLeapRun> {
+    const response = await fetch(`${API_URL}/analysis/vertical-leap/${runId}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<VerticalLeapRun>(response);
+  },
+
+  // ── Analysis — horizontal jump ────────────────────────────
+
+  async processHorizontalJump(token: string, videoId: number): Promise<{ message: string; run: HorizontalJumpRun }> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/process-horizontal-jump`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ analysis_type: "horizontal-jump" }),
+    });
+    return handleResponse<{ message: string; run: HorizontalJumpRun }>(response);
+  },
+
+  async getLatestHorizontalJump(token: string, videoId: number): Promise<HorizontalJumpRun> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/horizontal-jump/latest`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<HorizontalJumpRun>(response);
+  },
+
+  async getHorizontalJumpRun(token: string, runId: number): Promise<HorizontalJumpRun> {
+    const response = await fetch(`${API_URL}/analysis/horizontal-jump/${runId}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<HorizontalJumpRun>(response);
+  },
+
+  // ── Analysis — step length ────────────────────────────────
+
+  async processStepLength(token: string, videoId: number): Promise<{ message: string; run: StepLengthRun }> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/process-step-length`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ analysis_type: "step-length" }),
+    });
+    return handleResponse<{ message: string; run: StepLengthRun }>(response);
+  },
+
+  async getLatestStepLength(token: string, videoId: number): Promise<StepLengthRun> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/step-length/latest`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<StepLengthRun>(response);
+  },
+
+  async getStepLengthRun(token: string, runId: number): Promise<StepLengthRun> {
+    const response = await fetch(`${API_URL}/analysis/step-length/${runId}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<StepLengthRun>(response);
+  },
+
+  // ── Analysis — lateral shuffle ────────────────────────────
+
+  async processLateralShuffle(token: string, videoId: number): Promise<{ message: string; run: LateralShuffleRun }> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/process-lateral-shuffle`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ analysis_type: "lateral-shuffle" }),
+    });
+    return handleResponse<{ message: string; run: LateralShuffleRun }>(response);
+  },
+
+  async getLatestLateralShuffle(token: string, videoId: number): Promise<LateralShuffleRun> {
+    const response = await fetch(`${API_URL}/videos/${videoId}/lateral-shuffle/latest`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<LateralShuffleRun>(response);
+  },
+
+  async getLateralShuffleRun(token: string, runId: number): Promise<LateralShuffleRun> {
+    const response = await fetch(`${API_URL}/analysis/lateral-shuffle/${runId}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<LateralShuffleRun>(response);
+  },
 
   // ── Reports ───────────────────────────────────────────────
 
@@ -308,5 +393,160 @@ async getVerticalLeapRun(
       headers: authHeaders(token),
     });
     return handleResponse<{ reports: ReportRow[] }>(response);
+  },
+
+  // ── Team — Organisation ───────────────────────────────────
+
+  async getOrganisation(token: string): Promise<Organisation> {
+    const response = await fetch(`${API_URL}/teams/organisation`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<Organisation>(response);
+  },
+
+  async updateOrganisation(token: string, name: string): Promise<Organisation> {
+    const response = await fetch(`${API_URL}/teams/organisation`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify({ name }),
+    });
+    return handleResponse<Organisation>(response);
+  },
+
+  // ── Team — Groups ─────────────────────────────────────────
+
+  async getGroups(token: string): Promise<OrgGroup[]> {
+    const response = await fetch(`${API_URL}/teams/groups`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<OrgGroup[]>(response);
+  },
+
+  async createGroup(token: string, data: CreateGroupRequest): Promise<OrgGroup> {
+    const response = await fetch(`${API_URL}/teams/groups`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<OrgGroup>(response);
+  },
+
+  async updateGroup(token: string, id: number, data: UpdateGroupRequest): Promise<OrgGroup> {
+    const response = await fetch(`${API_URL}/teams/groups/${id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<OrgGroup>(response);
+  },
+
+  async deleteGroup(token: string, id: number): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/teams/groups/${id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  // ── Team — Members ────────────────────────────────────────
+
+  async getMembers(
+    token: string,
+    filters?: { type?: string; group_id?: number }
+  ): Promise<Member[]> {
+    const params = new URLSearchParams();
+    if (filters?.type) params.set("type", filters.type);
+    if (filters?.group_id) params.set("group_id", String(filters.group_id));
+    const qs = params.toString();
+    const response = await fetch(`${API_URL}/teams/members${qs ? `?${qs}` : ""}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<Member[]>(response);
+  },
+
+  async createMember(token: string, data: CreateMemberRequest): Promise<Member> {
+    const response = await fetch(`${API_URL}/teams/members`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<Member>(response);
+  },
+
+  async getMember(token: string, id: number): Promise<Member> {
+    const response = await fetch(`${API_URL}/teams/members/${id}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<Member>(response);
+  },
+
+  async updateMember(token: string, id: number, data: UpdateMemberRequest): Promise<Member> {
+    const response = await fetch(`${API_URL}/teams/members/${id}`, {
+      method: "PATCH",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<Member>(response);
+  },
+
+  async deleteMember(token: string, id: number): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/teams/members/${id}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  async presignMemberProfileImage(
+    token: string,
+    memberId: number,
+    data: { content_type: string; filename: string }
+  ): Promise<ProfileImagePresignResponse> {
+    const response = await fetch(`${API_URL}/teams/members/${memberId}/profile-image/presign`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<ProfileImagePresignResponse>(response);
+  },
+
+  async addMemberToGroup(
+    token: string,
+    memberId: number,
+    groupId: number
+  ): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/teams/members/${memberId}/groups/${groupId}`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  async removeMemberFromGroup(
+    token: string,
+    memberId: number,
+    groupId: number
+  ): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/teams/members/${memberId}/groups/${groupId}`, {
+      method: "DELETE",
+      headers: authHeaders(token),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  // ── Team — Stats & Reference ──────────────────────────────
+
+  async getMemberStats(token: string): Promise<MemberStats> {
+    const response = await fetch(`${API_URL}/teams/stats`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<MemberStats>(response);
+  },
+
+  async getSports(token: string): Promise<{ sports: string[] }> {
+    const response = await fetch(`${API_URL}/teams/sports`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<{ sports: string[] }>(response);
   },
 };

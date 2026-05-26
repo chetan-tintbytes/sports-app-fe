@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/utils/lib/api";
 import { getToken } from "@/utils/lib/auth";
-import { ReportRow, AnalysisType } from "@/utils/types/index";
+import { ReportRow } from "@/utils/types/index";
 
 // ── Helpers ────────────────────────────────────────────────
 
@@ -18,13 +18,19 @@ const formatDate = (iso: string) =>
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
 const ANALYSIS_LABEL: Record<string, string> = {
-  "fly-run": "Fly Run",
-  "vertical-leap": "Vertical Leap",
+  "fly-run":         "Fly Run",
+  "vertical-leap":   "Vertical Leap",
+  "horizontal-jump": "Horizontal Jump",
+  "step-length":     "Step Length",
+  "lateral-shuffle": "Lateral Shuffle",
 };
 
 const ANALYSIS_TAG_COLOR: Record<string, string> = {
-  "fly-run": "bg-blue-100 text-blue-700",
-  "vertical-leap": "bg-emerald-100 text-emerald-700",
+  "fly-run":         "bg-blue-100 text-blue-700",
+  "vertical-leap":   "bg-emerald-100 text-emerald-700",
+  "horizontal-jump": "bg-sky-100 text-sky-700",
+  "step-length":     "bg-teal-100 text-teal-700",
+  "lateral-shuffle": "bg-orange-100 text-orange-700",
 };
 
 // ── Icons ──────────────────────────────────────────────────
@@ -62,6 +68,27 @@ const LeapIcon = () => (
   </svg>
 );
 
+const HorizontalJumpIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+    <line x1="5" y1="12" x2="19" y2="12" />
+    <polyline points="13 6 19 12 13 18" />
+  </svg>
+);
+
+const StepLengthIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+    <path d="M3 12h4l3 8 4-16 3 8h4" />
+  </svg>
+);
+
+const LateralShuffleIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+    <polyline points="17 8 21 12 17 16" />
+    <polyline points="7 8 3 12 7 16" />
+    <line x1="3" y1="12" x2="21" y2="12" />
+  </svg>
+);
+
 // ── Column definitions ─────────────────────────────────────
 
 const COLUMNS = [
@@ -72,6 +99,19 @@ const COLUMNS = [
   "DATE",
   "ACTION",
 ];
+
+// ── Filter options ─────────────────────────────────────────
+
+const FILTER_OPTIONS = [
+  { key: "all",             label: "All" },
+  { key: "fly-run",         label: "Fly Run" },
+  { key: "vertical-leap",   label: "Vertical Leap" },
+  { key: "horizontal-jump", label: "Horizontal Jump" },
+  { key: "step-length",     label: "Step Length" },
+  { key: "lateral-shuffle", label: "Lateral Shuffle" },
+] as const;
+
+type FilterKey = typeof FILTER_OPTIONS[number]["key"];
 
 // ── Result cell — renders differently per report type ──────
 
@@ -89,7 +129,50 @@ function ResultCell({ report }: { report: ReportRow }) {
       </div>
     );
   }
-  // fly-run — no speed data in merged row, just show type indicator
+
+  if (report.report_type === "horizontal-jump") {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-semibold text-sky-600">
+          {round2(report.jump_distance_cm ?? 0)} cm
+          <span className="text-xs font-normal text-gray-400 ml-1">distance</span>
+        </span>
+        <span className="text-xs text-gray-400">
+          {round2(report.flight_time_s ?? 0)} s flight
+        </span>
+      </div>
+    );
+  }
+
+  if (report.report_type === "step-length") {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-semibold text-teal-600">
+          {round2(report.avg_step_length_cm ?? 0)} cm
+          <span className="text-xs font-normal text-gray-400 ml-1">avg step</span>
+        </span>
+        <span className="text-xs text-gray-400">
+          {report.step_count ?? 0} steps detected
+        </span>
+      </div>
+    );
+  }
+
+  if (report.report_type === "lateral-shuffle") {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-semibold text-orange-600">
+          {report.shuffle_count ?? 0} shuffles
+          <span className="text-xs font-normal text-gray-400 ml-1">total</span>
+        </span>
+        <span className="text-xs text-gray-400">
+          {round2(report.symmetry_pct ?? 0)}% symmetry
+        </span>
+      </div>
+    );
+  }
+
+  // fly-run
   return (
     <span className="text-sm text-gray-400 italic">Speed analysis</span>
   );
@@ -105,6 +188,7 @@ export default function Reports() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(50);
   const [refreshing, setRefreshing] = useState(false);
@@ -131,14 +215,55 @@ export default function Reports() {
   // ── Filter & paginate ────────────────────────────────────
 
   const q = search.toLowerCase();
-  const filtered = reports.filter(
-    (r) =>
+
+  const filtered = reports.filter((r) => {
+    const matchesSearch =
       r.original_name.toLowerCase().includes(q) ||
-      ANALYSIS_LABEL[r.report_type].toLowerCase().includes(q)
-  );
+      ANALYSIS_LABEL[r.report_type]?.toLowerCase().includes(q);
+
+    const matchesFilter =
+      activeFilter === "all" || r.report_type === activeFilter;
+
+    return matchesSearch && matchesFilter;
+  });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const paginated = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
+
+  const handleFilterChange = (key: FilterKey) => {
+    setActiveFilter(key);
+    setCurrentPage(1);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearch(value);
+    setActiveFilter("all");
+    setCurrentPage(1);
+  };
+
+  // ── Action routing per type ──────────────────────────────
+
+  const handleViewResults = (report: ReportRow) => {
+    if (report.report_type === "vertical-leap") {
+      router.push(`/videos/vertical-leap?id=${report.video_id}&runId=${report.run_id}`);
+    } else if (report.report_type === "horizontal-jump") {
+      router.push(`/videos/horizontal-jump?id=${report.video_id}&runId=${report.run_id}`);
+    } else if (report.report_type === "step-length") {
+      router.push(`/videos/step-length?id=${report.video_id}&runId=${report.run_id}`);
+    } else if (report.report_type === "lateral-shuffle") {
+      router.push(`/videos/lateral-shuffle?id=${report.video_id}&runId=${report.run_id}`);
+    } else {
+      router.push(`/videos/analysis?id=${report.video_id}&runId=${report.run_id}`);
+    }
+  };
+
+  const getViewIcon = (reportType: string) => {
+    if (reportType === "vertical-leap")   return <LeapIcon />;
+    if (reportType === "horizontal-jump") return <HorizontalJumpIcon />;
+    if (reportType === "step-length")     return <StepLengthIcon />;
+    if (reportType === "lateral-shuffle") return <LateralShuffleIcon />;
+    return <ChartIcon />;
+  };
 
   // ── Render ───────────────────────────────────────────────
 
@@ -162,18 +287,18 @@ export default function Reports() {
             </button>
 
             {/* Filter chips */}
-            <div className="flex items-center gap-2">
-              {(["all", "fly-run", "vertical-leap"] as const).map((f) => (
+            <div className="flex items-center gap-2 flex-wrap">
+              {FILTER_OPTIONS.map(({ key, label }) => (
                 <button
-                  key={f}
-                  onClick={() => { setSearch(f === "all" ? "" : f === "fly-run" ? "Fly Run" : "Vertical Leap"); setCurrentPage(1); }}
+                  key={key}
+                  onClick={() => handleFilterChange(key)}
                   className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all ${
-                    (f === "all" && search === "") || search === f
+                    activeFilter === key
                       ? "bg-violet-600 text-white border-violet-600"
                       : "bg-white text-gray-500 border-gray-200 hover:border-violet-300 hover:text-violet-600"
                   }`}
                 >
-                  {f === "all" ? "All" : ANALYSIS_LABEL[f]}
+                  {label}
                 </button>
               ))}
             </div>
@@ -187,7 +312,7 @@ export default function Reports() {
                 type="text"
                 placeholder="Search by video name or analysis type…"
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="w-full pl-10 pr-10 py-2.5 rounded-full border border-gray-200 bg-gray-50 text-sm text-gray-600 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-200"
               />
               <span className="absolute right-4 top-1/2 -translate-y-1/2"><SearchIcon /></span>
@@ -242,9 +367,11 @@ export default function Reports() {
                           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
                         </svg>
                         <p className="text-sm">
-                          {search ? "No reports match your search" : "No analysis reports yet"}
+                          {search || activeFilter !== "all"
+                            ? "No reports match your search"
+                            : "No analysis reports yet"}
                         </p>
-                        {!search && (
+                        {!search && activeFilter === "all" && (
                           <p className="text-xs text-gray-400">
                             Process a video with AI to see results here
                           </p>
@@ -275,12 +402,12 @@ export default function Reports() {
 
                       {/* Analysis type tag */}
                       <td className="px-4 py-4">
-                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ANALYSIS_TAG_COLOR[report.report_type]}`}>
-                          {ANALYSIS_LABEL[report.report_type]}
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ANALYSIS_TAG_COLOR[report.report_type] ?? "bg-gray-100 text-gray-600"}`}>
+                          {ANALYSIS_LABEL[report.report_type] ?? report.report_type}
                         </span>
                       </td>
 
-                      {/* Result — varies by type */}
+                      {/* Result */}
                       <td className="px-4 py-4">
                         <ResultCell report={report} />
                       </td>
@@ -290,19 +417,13 @@ export default function Reports() {
                         {formatDate(report.created_at)}
                       </td>
 
-                      {/* Action — routes to correct page per type */}
+                      {/* Action */}
                       <td className="px-4 py-4">
                         <button
-                          onClick={() => {
-                            if (report.report_type === "vertical-leap") {
-                              router.push(`/videos/vertical-leap?id=${report.video_id}&runId=${report.run_id}`);
-                            } else {
-                              router.push(`/videos/analysis?id=${report.video_id}&runId=${report.run_id}`);
-                            }
-                          }}
+                          onClick={() => handleViewResults(report)}
                           className="flex items-center gap-2 text-xs font-bold tracking-widest uppercase px-4 py-2 rounded-full border-2 border-[#8B5CF6] text-[#8B5CF6] hover:bg-[#8B5CF6] hover:text-white transition-all whitespace-nowrap"
                         >
-                          {report.report_type === "vertical-leap" ? <LeapIcon /> : <ChartIcon />}
+                          {getViewIcon(report.report_type)}
                           View Results
                         </button>
                       </td>

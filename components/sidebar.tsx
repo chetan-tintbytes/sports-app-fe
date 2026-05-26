@@ -7,23 +7,19 @@ import {
   Building2,
   Users,
   UserCircle,
-  Share2,
   BarChart3,
-  ClipboardList,
-  Archive,
-  HelpCircle,
   BookOpen,
   X,
   ChevronDown,
   LogOut,
   LucideProps,
 } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
 import { api } from "@/utils/lib/api";
 import { getToken, removeToken } from "@/utils/lib/auth";
+import { User } from "@/utils/types";
 
 interface SubMenuItem {
   label: string;
@@ -43,8 +39,10 @@ interface MenuItem {
 export default function Sidebar({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
-  const [userName, setUserName] = useState("Loading...");
+  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
+    ORGANISATION: true,
+  });
+  const [user, setUser] = useState<User | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   useEffect(() => {
@@ -55,10 +53,9 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
         return;
       }
       try {
-        const user = await api.getProfile(token);
-        setUserName(user.name);
+        const profile = await api.getProfile(token);
+        setUser(profile);
       } catch {
-        // Token invalid or expired — boot to login
         removeToken();
         router.push("/login");
       }
@@ -86,11 +83,7 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
     },
     { icon: Users, label: "GROUP", path: "/group" },
     { icon: UserCircle, label: "ATHLETES", path: "/athletes" },
-    { icon: Share2, label: "SHARES", path: "/shares" },
     { icon: BarChart3, label: "REPORTS", path: "/reports" },
-    { icon: ClipboardList, label: "SESSION ORDER SHEET", path: "/session-order" },
-    { icon: Archive, label: "ARCHIVED VIDEOS", path: "/archived" },
-    { icon: HelpCircle, label: "SUPPORT / FEEDBACK", path: "/support" },
     { icon: BookOpen, label: "USER GUIDE", path: "/guide" },
   ];
 
@@ -121,7 +114,9 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
           {item.hasSubmenu && (
             <ChevronDown
               size={16}
-              className={`text-gray-400 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
+              className={`text-gray-400 transition-transform duration-200 ${
+                isExpanded ? "rotate-180" : ""
+              }`}
             />
           )}
         </Link>
@@ -155,25 +150,41 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
         <div className="flex flex-col h-full">
           {/* Profile section */}
           <div className="p-6 border-b border-slate-700">
-            <div className="flex items-center gap-3">
-              <div className="w-16 h-16 bg-gradient-to-br from-blue-400 to-blue-600 rounded-lg flex items-center justify-center shadow-lg overflow-hidden relative flex-shrink-0">
-                <Image
-                  src="/profile_pic.jpg"
-                  alt="profile"
-                  fill
-                  className="object-cover"
-                />
+            <Link
+              href="/profile"
+              onClick={() => setIsSidebarOpen(false)}
+              className="flex items-center gap-3 group"
+            >
+              {/* Avatar */}
+              <div className="w-14 h-14 rounded-lg flex-shrink-0 overflow-hidden bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-lg">
+                {user?.profile_image_url ? (
+                  // Plain <img> avoids Next.js caching issues with short-lived presigned URLs
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={user.profile_image_url}
+                    alt={user.name}
+                    className="object-cover w-full h-full"
+                  />
+                ) : (
+                  <span className="text-2xl font-bold text-white select-none">
+                    {user?.name?.charAt(0)?.toUpperCase() ?? "A"}
+                  </span>
+                )}
               </div>
+
+              {/* Name + role */}
               <div className="flex-1 min-w-0">
-                <button className="flex items-center gap-1 text-white hover:text-blue-300 transition-colors max-w-full">
-                  <span className="font-semibold text-base truncate">{userName}</span>
-                  <ChevronDown size={12} className="flex-shrink-0" />
-                </button>
-                <p className="text-sm text-gray-400 uppercase tracking-tighter">
+                <div className="flex items-center gap-1">
+                  <span className="font-semibold text-sm text-white truncate group-hover:text-blue-300 transition-colors">
+                    {user?.name ?? "Loading…"}
+                  </span>
+                  <ChevronDown size={12} className="text-gray-400 flex-shrink-0" />
+                </div>
+                <p className="text-xs text-gray-400 uppercase tracking-tighter mt-0.5">
                   Admin
                 </p>
               </div>
-            </div>
+            </Link>
           </div>
 
           {/* Nav items */}
@@ -195,7 +206,9 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
               </button>
             ) : (
               <div className="bg-slate-700/60 rounded-lg px-4 py-3">
-                <p className="text-xs text-gray-300 mb-3 text-center">Sign out of your account?</p>
+                <p className="text-xs text-gray-300 mb-3 text-center">
+                  Sign out of your account?
+                </p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setShowLogoutConfirm(false)}
