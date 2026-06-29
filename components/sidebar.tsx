@@ -68,7 +68,7 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
     router.push("/login");
   };
 
-  const menuItems: MenuItem[] = [
+  const adminMenuItems: MenuItem[] = [
     { icon: Upload, label: "IMPORT/UPLOAD VIDEOS", path: "/upload" },
     { icon: Video, label: "ALL VIDEOS", path: "/videos" },
     {
@@ -81,11 +81,21 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
         { label: "Member List", path: "/organisation/list" },
       ],
     },
-    { icon: Users, label: "GROUP", path: "/group" },
+    // { icon: Users, label: "GROUP", path: "/group" },
     { icon: UserCircle, label: "ATHLETES", path: "/athletes" },
     { icon: BarChart3, label: "REPORTS", path: "/reports" },
     { icon: BookOpen, label: "USER GUIDE", path: "/guide" },
   ];
+
+  const memberMenuItems: MenuItem[] = [
+    { icon: Upload, label: "IMPORT/UPLOAD VIDEOS", path: "/upload" },
+    { icon: Video, label: "ALL VIDEOS", path: "/videos" },
+    { icon: Users, label: "MEMBERS", path: "/organisation/list" },
+    { icon: BarChart3, label: "REPORTS", path: "/reports" },
+    { icon: BookOpen, label: "USER GUIDE", path: "/guide" },
+  ];
+
+  const menuItems = user?.is_admin ? adminMenuItems : memberMenuItems;
 
   const toggleSubmenu = (label: string) => {
     setExpandedMenus((prev) => ({ ...prev, [label]: !prev[label] }));
@@ -108,8 +118,13 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
           }}
         >
           <div className="flex items-center gap-3">
-            <item.icon size={18} className="text-gray-400 group-hover:text-white" />
-            <span className="text-xs font-medium tracking-wide">{item.label}</span>
+            <item.icon
+              size={18}
+              className="text-gray-400 group-hover:text-white"
+            />
+            <span className="text-xs font-medium tracking-wide">
+              {item.label}
+            </span>
           </div>
           {item.hasSubmenu && (
             <ChevronDown
@@ -178,10 +193,13 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
                   <span className="font-semibold text-sm text-white truncate group-hover:text-blue-300 transition-colors">
                     {user?.name ?? "Loading…"}
                   </span>
-                  <ChevronDown size={12} className="text-gray-400 flex-shrink-0" />
+                  <ChevronDown
+                    size={12}
+                    className="text-gray-400 flex-shrink-0"
+                  />
                 </div>
                 <p className="text-xs text-gray-400 uppercase tracking-tighter mt-0.5">
-                  Admin
+                  {user?.is_admin ? "Admin" : user?.role_name || "Member"}
                 </p>
               </div>
             </Link>
@@ -202,7 +220,9 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
                 className="w-full flex items-center gap-3 px-4 py-3 text-gray-400 hover:bg-red-500/10 hover:text-red-400 rounded-lg transition-all duration-200 group"
               >
                 <LogOut size={18} className="group-hover:text-red-400" />
-                <span className="text-xs font-medium tracking-wide">LOGOUT</span>
+                <span className="text-xs font-medium tracking-wide">
+                  LOGOUT
+                </span>
               </button>
             ) : (
               <div className="bg-slate-700/60 rounded-lg px-4 py-3">

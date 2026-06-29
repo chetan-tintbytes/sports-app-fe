@@ -2,18 +2,18 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/utils/lib/api";
-import { getToken } from "@/utils/lib/auth";
+import { getToken, getIsAdmin } from "@/utils/lib/auth";
 import {
   Member,
   OrgGroup,
-  MemberType,
   ALL_MEMBER_TYPES,
   MEMBER_TYPE_LABELS,
   MEMBER_TYPE_ICONS,
   PREDEFINED_SPORTS,
   GENDERS,
-  CreateMemberRequest,
   UpdateMemberRequest,
+  Role,
+  CreateInvitationResponse,
 } from "@/utils/types";
 import { createPortal } from "react-dom";
 
@@ -327,12 +327,14 @@ const ManageGroupsModal = ({
 
 const ActionMenu = ({
   member,
+  isAdmin,
   onView,
   onEdit,
   onDelete,
   onManageGroups,
 }: {
   member: Member;
+  isAdmin: boolean;
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -413,9 +415,9 @@ const ActionMenu = ({
             className="w-44 bg-white border border-gray-100 rounded-xl shadow-lg overflow-hidden"
           >
             {item("View Profile", onView)}
-            {item("Edit", onEdit)}
-            {item("Manage Groups", onManageGroups)}
-            {item("Delete", onDelete, true)}
+            {isAdmin && item("Edit", onEdit)}
+            {isAdmin && item("Manage Groups", onManageGroups)}
+            {isAdmin && item("Delete", onDelete, true)}
           </div>,
           document.body
         )}
@@ -430,6 +432,7 @@ type PageView = "list" | "add" | "edit";
 export default function MembersListPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isAdmin = getIsAdmin();
 
   const [view, setView] = useState<PageView>("list");
   const [members, setMembers] = useState<Member[]>([]);
@@ -441,6 +444,7 @@ export default function MembersListPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const [inviteResult, setInviteResult] = useState<CreateInvitationResponse | null>(null);
 
   // Filters
   const [search, setSearch] = useState("");
@@ -485,71 +489,71 @@ export default function MembersListPage() {
 
   // ── Handlers ──────────────────────────────────────────────
 
-  const buildPayload = (f: FormState): CreateMemberRequest => {
+  // Add → invitation-based (looks up role_id from the member type slug)
+  const handleAdd = async (f: FormState) => {
+    if (!f.memberType) { setFormError("Member type is required."); return; }
+    if (!f.name.trim()) { setFormError("Name is required."); return; }
+    if (!f.email.trim()) { setFormError("Email is required to send the invitation."); return; }
+    const token = getToken(); if (!token) return;
+    setSubmitting(true); setFormError("");
+    try {
+      const roles = await api.getRoles(token);
+      // memberType is a slug like "athlete"; role names are like "Athlete"
+      const matchingRole = roles.find(
+        (r) => r.name.toLowerCase().replace(/\s+/g, "_") === f.memberType
+      );
+      if (!matchingRole) {
+        setFormError(`No role found for "${f.memberType}". Please add matching roles in Admin → Roles.`);
+        return;
+      }
+      const result = await api.createMember(token, {
+        name: f.name.trim(),
+        email: f.email.trim(),
+        role_id: matchingRole.id,
+      });
+      await loadData();
+      setInviteResult(result);
+      showToast("Invitation sent!");
+    } catch (err: unknown) { setFormError(err instanceof Error ? err.message : "Failed to send invitation."); }
+    finally { setSubmitting(false); }
+  };
+
+  // Profile-only fields (user_profiles table) — sent to PATCH /teams/profiles/:userId
+  const buildProfilePayload = (f: FormState): UpdateMemberRequest => {
     const otherMetrics = f.otherMetrics
       .filter((m) => m.name.trim())
       .reduce<Record<string, string>>((acc, m) => { acc[m.name.trim()] = m.value; return acc; }, {});
     return {
-      member_type: f.memberType as MemberType,
-      name: f.name.trim(),
-      email: f.email || undefined,
-      date_of_birth: f.dob ? `${f.dob}T00:00:00Z` : undefined,
+      date_of_birth: f.dob ? `${f.dob}T00:00:00Z` : null,
       gender: f.gender || undefined,
       phone_no: f.phone || undefined,
       main_sports: f.mainSport ? [f.mainSport] : [],
       other_sports: f.otherSport ? [f.otherSport] : [],
-      height: f.height ? parseFloat(f.height) : undefined,
-      weight: f.weight ? parseFloat(f.weight) : undefined,
-      arm_span: f.armSpan ? parseFloat(f.armSpan) : undefined,
-      leg_length: f.legLength ? parseFloat(f.legLength) : undefined,
-      shoe_size: f.shoeSize ? parseFloat(f.shoeSize) : undefined,
+      height: f.height ? parseFloat(f.height) : null,
+      weight: f.weight ? parseFloat(f.weight) : null,
+      arm_span: f.armSpan ? parseFloat(f.armSpan) : null,
+      leg_length: f.legLength ? parseFloat(f.legLength) : null,
+      shoe_size: f.shoeSize ? parseFloat(f.shoeSize) : null,
       other_metrics: Object.keys(otherMetrics).length ? otherMetrics : undefined,
-      group_ids: f.groupId ? [parseInt(f.groupId)] : [],
     };
-  };
-
-  const handleAdd = async (f: FormState) => {
-    if (!f.memberType) { setFormError("Member type is required."); return; }
-    if (!f.name.trim()) { setFormError("Name is required."); return; }
-    const token = getToken(); if (!token) return;
-    setSubmitting(true); setFormError("");
-    try {
-      await api.createMember(token, buildPayload(f));
-      await loadData();
-      setView("list");
-      showToast("Member added successfully!");
-    } catch (err: unknown) { setFormError(err instanceof Error ? err.message : "Failed to add member."); }
-    finally { setSubmitting(false); }
   };
 
   const handleEdit = async (f: FormState) => {
     if (!editingMember) return;
-    if (!f.name.trim()) { setFormError("Name is required."); return; }
     const token = getToken(); if (!token) return;
     setSubmitting(true); setFormError("");
     try {
-      const p = buildPayload(f);
-      const upd: UpdateMemberRequest = {
-        member_type: p.member_type,
-        name: p.name,
-        email: p.email,
-        date_of_birth: p.date_of_birth ?? null,
-        gender: p.gender,
-        phone_no: p.phone_no,
-        main_sports: p.main_sports,
-        other_sports: p.other_sports,
-        height: p.height ?? null,
-        weight: p.weight ?? null,
-        arm_span: p.arm_span ?? null,
-        leg_length: p.leg_length ?? null,
-        shoe_size: p.shoe_size ?? null,
-        other_metrics: p.other_metrics,
-      };
-      await api.updateMember(token, editingMember.id, upd);
-      // Handle group assignment if changed
+      // Run profile update and user-level (name/email) update in parallel
+      await Promise.all([
+        api.updateMember(token, editingMember.user_id, buildProfilePayload(f)),
+        api.adminUpdateUser(token, editingMember.user_id, {
+          name: f.name.trim() || undefined,
+          email: f.email.trim() || undefined,
+        }),
+      ]);
       if (f.groupId) {
         const alreadyIn = editingMember.groups?.some((g) => String(g.id) === f.groupId);
-        if (!alreadyIn) await api.addMemberToGroup(token, editingMember.id, parseInt(f.groupId));
+        if (!alreadyIn) await api.addMemberToGroup(token, editingMember.user_id, parseInt(f.groupId));
       }
       await loadData();
       setView("list");
@@ -563,7 +567,7 @@ export default function MembersListPage() {
     if (!deleteTarget) return;
     const token = getToken(); if (!token) return;
     try {
-      await api.deleteMember(token, deleteTarget.id);
+      await api.deleteOrgUser(token, deleteTarget.user_id);
       setDeleteTarget(null);
       await loadData();
       showToast("Member deleted.");
@@ -573,7 +577,72 @@ export default function MembersListPage() {
   // ── Render ────────────────────────────────────────────────
 
   if (view === "add") {
-    return <MemberForm initial={emptyForm()} groups={groups} onBack={() => { setView("list"); setFormError(""); }} onSubmit={handleAdd} title="Add Member" submitLabel="ADD" submitting={submitting} error={formError} />;
+    // ── Success — show invite link ──────────────────────────
+    if (inviteResult) {
+      return (
+        <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 max-w-md w-full">
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 bg-green-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.2" strokeLinecap="round">
+                  <path d="M22 2 11 13" /><path d="M22 2 15 22 11 13 2 9l20-7z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold text-gray-800">Invitation Sent!</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                <strong>{inviteResult.invitation.name}</strong> ({inviteResult.invitation.email}) has been invited as <strong>{inviteResult.role.name}</strong>.
+              </p>
+              {inviteResult.email_warning && (
+                <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl text-left">
+                  ⚠️ Email delivery warning: {inviteResult.email_warning}
+                </div>
+              )}
+            </div>
+
+            <div className="mb-6">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Shareable invite link
+              </p>
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                <span className="text-xs text-gray-600 flex-1 break-all leading-relaxed">
+                  {inviteResult.invite_link}
+                </span>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(inviteResult.invite_link);
+                    showToast("Link copied!");
+                  }}
+                  className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                Share this link with the member if the email didn't arrive. They'll use it to set their password.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setInviteResult(null); setFormError(""); }}
+                className="flex-1 py-2.5 bg-violet-400 hover:bg-violet-500 text-white text-sm font-semibold rounded-xl transition-colors"
+              >
+                Invite Another
+              </button>
+              <button
+                onClick={() => { setInviteResult(null); setView("list"); }}
+                className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl transition-colors"
+              >
+                Back to List
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Form ────────────────────────────────────────────────
+    return <MemberForm initial={emptyForm()} groups={groups} onBack={() => { setView("list"); setFormError(""); setInviteResult(null); }} onSubmit={handleAdd} title="Add Member" submitLabel="SEND INVITE" submitting={submitting} error={formError} />;
   }
 
   if (view === "edit" && editingMember) {
@@ -617,9 +686,11 @@ export default function MembersListPage() {
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6">
             {/* Top toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+              {isAdmin && (
               <button onClick={() => { setView("add"); setFormError(""); }} className="flex items-center gap-2 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold tracking-widest px-5 py-3 rounded-xl transition-colors shadow">
                 + ADD NEW MEMBER
               </button>
+              )}
               <button onClick={loadData} className="flex items-center gap-2 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold tracking-widest px-5 py-3 rounded-xl transition-colors shadow">
                 ↻ REFRESH
               </button>
@@ -661,13 +732,20 @@ export default function MembersListPage() {
                       <tr key={m.id} className={`border-b border-gray-50 hover:bg-violet-50/40 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}>
                         <td className="px-4 py-3 text-gray-500 text-xs">{fmt(m.created_at)}</td>
                         <td className="px-4 py-3">
-                          <button onClick={() => router.push(`/organisation/members/${m.id}`)} className="text-blue-500 hover:text-blue-700 hover:underline font-medium transition-colors text-left">
-                            <span className="mr-2">{MEMBER_TYPE_ICONS[m.member_type]}</span>{m.name}
-                          </button>
+                          <span className="font-medium text-gray-800">
+                            <span className="mr-2">
+                              {m.is_admin
+                                ? "👑"
+                                : (MEMBER_TYPE_ICONS[m.member_type as keyof typeof MEMBER_TYPE_ICONS] ?? "👤")}
+                            </span>
+                            {m.name}
+                          </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className="bg-violet-100 text-violet-700 text-xs font-medium px-2.5 py-1 rounded-full">
-                            {MEMBER_TYPE_LABELS[m.member_type]}
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${m.is_admin ? "bg-blue-100 text-blue-700" : "bg-violet-100 text-violet-700"}`}>
+                            {m.is_admin
+                              ? "Admin"
+                              : (MEMBER_TYPE_LABELS[m.member_type as keyof typeof MEMBER_TYPE_LABELS] ?? m.role_name ?? "Member")}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-500 text-xs">
@@ -676,7 +754,8 @@ export default function MembersListPage() {
                         <td className="px-4 py-3">
                           <ActionMenu
                             member={m}
-                            onView={() => router.push(`/organisation/members/${m.id}`)}
+                            isAdmin={isAdmin}
+                            onView={() => router.push(`/organisation/members/${m.user_id}`)}
                             onEdit={() => { setEditingMember(m); setView("edit"); setFormError(""); }}
                             onDelete={() => setDeleteTarget(m)}
                             onManageGroups={() => setManageGroupsMember(m)}

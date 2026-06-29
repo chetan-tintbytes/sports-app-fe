@@ -3,12 +3,10 @@ import React, { useState, useEffect, useCallback, use } from "react";
 import { useRouter } from "next/navigation";
 // next/image not used — presigned S3 URLs use plain <img> to avoid caching issues
 import { api } from "@/utils/lib/api";
-import { getToken } from "@/utils/lib/auth";
+import { getToken, getIsAdmin } from "@/utils/lib/auth";
 import {
   Member,
   OrgGroup,
-  MemberType,
-  ALL_MEMBER_TYPES,
   MEMBER_TYPE_LABELS,
   MEMBER_TYPE_ICONS,
   PREDEFINED_SPORTS,
@@ -70,7 +68,6 @@ const EditFormField = ({ label, required, children }: { label: string; required?
 // ─── Edit state ───────────────────────────────────────────────────────────────
 
 interface EditState {
-  memberType: string;
   name: string;
   email: string;
   dob: string;
@@ -87,7 +84,6 @@ interface EditState {
 }
 
 const memberToEdit = (m: Member): EditState => ({
-  memberType: m.member_type,
   name: m.name,
   email: m.email,
   dob: m.date_of_birth ? m.date_of_birth.substring(0, 10) : "",
@@ -113,11 +109,13 @@ const GroupsPanel = ({
   groups,
   onUpdate,
   showToast,
+  isAdmin,
 }: {
   member: Member;
   groups: OrgGroup[];
   onUpdate: (m: Member) => void;
   showToast: (msg: string, type?: "success" | "error") => void;
+  isAdmin: boolean;
 }) => {
   const [addGroupId, setAddGroupId] = useState("");
   const [busy, setBusy] = useState(false);
@@ -128,8 +126,8 @@ const GroupsPanel = ({
     const token = getToken(); if (!token) return;
     setBusy(true);
     try {
-      await api.removeMemberFromGroup(token, member.id, groupId);
-      const updated = await api.getMember(token, member.id);
+      await api.removeMemberFromGroup(token, member.user_id, groupId);
+      const updated = await api.getMember(token, member.user_id);
       onUpdate(updated);
       showToast("Removed from group.");
     } catch { showToast("Failed to remove from group.", "error"); }
@@ -141,8 +139,8 @@ const GroupsPanel = ({
     const token = getToken(); if (!token) return;
     setBusy(true);
     try {
-      await api.addMemberToGroup(token, member.id, parseInt(addGroupId));
-      const updated = await api.getMember(token, member.id);
+      await api.addMemberToGroup(token, member.user_id, parseInt(addGroupId));
+      const updated = await api.getMember(token, member.user_id);
       onUpdate(updated);
       setAddGroupId("");
       showToast("Added to group.");
@@ -159,12 +157,14 @@ const GroupsPanel = ({
           {(member.groups ?? []).map((g) => (
             <span key={g.id} className="flex items-center gap-1.5 bg-violet-100 text-violet-700 text-xs font-medium px-3 py-1.5 rounded-full">
               {g.name}
-              <button onClick={() => remove(g.id)} disabled={busy} className="hover:text-red-500 transition-colors leading-none">✕</button>
+              {isAdmin && (
+                <button onClick={() => remove(g.id)} disabled={busy} className="hover:text-red-500 transition-colors leading-none">✕</button>
+              )}
             </span>
           ))}
         </div>
       )}
-      {available.length > 0 && (
+      {isAdmin && available.length > 0 && (
         <div className="flex gap-2 mt-2">
           <select value={addGroupId} onChange={(e) => setAddGroupId(e.target.value)} className="flex-1 bg-gray-100 rounded-lg px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-violet-300 border-none">
             <option value="">Add to group…</option>
@@ -183,10 +183,12 @@ const ProfileImageSection = ({
   member,
   onUpdate,
   showToast,
+  isAdmin,
 }: {
   member: Member;
   onUpdate: (m: Member) => void;
   showToast: (msg: string, type?: "success" | "error") => void;
+  isAdmin: boolean;
 }) => {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -200,18 +202,16 @@ const ProfileImageSection = ({
     const token = getToken(); if (!token) return;
     setUploading(true); setProgress(0);
     try {
-      const { upload_url, key } = await api.presignMemberProfileImage(token, member.id, {
+      const { upload_url, key } = await api.presignMemberProfileImage(token, member.user_id, {
         content_type: file.type,
-        // Backend rejects filenames with dots (path-traversal guard); use a safe timestamp name.
         filename: `profile_${Date.now()}`,
       });
       await api.uploadToS3(upload_url, file, setProgress);
-      const updated = await api.updateMember(token, member.id, { profile_image_key: key });
+      const updated = await api.updateMember(token, member.user_id, { profile_image_key: key });
       onUpdate(updated);
       showToast("Profile image updated!");
     } catch { showToast("Failed to upload image.", "error"); }
     finally { setUploading(false); setProgress(0); }
-    // Reset file input
     e.target.value = "";
   };
 
@@ -222,21 +222,23 @@ const ProfileImageSection = ({
           {member.profile_image_url ? (
             <img src={member.profile_image_url} alt={member.name} className="object-cover w-full h-full" />
           ) : (
-            <span className="text-3xl">{MEMBER_TYPE_ICONS[member.member_type]}</span>
+            <span className="text-3xl">{MEMBER_TYPE_ICONS[member.member_type as keyof typeof MEMBER_TYPE_ICONS]}</span>
           )}
         </div>
-        <div>
-          <label className={`cursor-pointer inline-flex items-center gap-2 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors ${uploading ? "opacity-60 pointer-events-none" : ""}`}>
-            {uploading ? `Uploading ${progress}%…` : "📷 Upload Photo"}
-            <input type="file" accept=".png,.gif,.bmp,.jpg,.jpeg" className="hidden" onChange={handleFile} disabled={uploading} />
-          </label>
-          <p className="text-xs text-gray-400 mt-1.5">PNG, GIF, BMP, JPG/JPEG · Min 250×150 px</p>
-          {uploading && (
-            <div className="mt-2 h-1.5 w-40 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full bg-violet-400 rounded-full transition-all" style={{ width: `${progress}%` }} />
-            </div>
-          )}
-        </div>
+        {isAdmin && (
+          <div>
+            <label className={`cursor-pointer inline-flex items-center gap-2 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-4 py-2.5 rounded-lg transition-colors ${uploading ? "opacity-60 pointer-events-none" : ""}`}>
+              {uploading ? `Uploading ${progress}%…` : "📷 Upload Photo"}
+              <input type="file" accept=".png,.gif,.bmp,.jpg,.jpeg" className="hidden" onChange={handleFile} disabled={uploading} />
+            </label>
+            <p className="text-xs text-gray-400 mt-1.5">PNG, GIF, BMP, JPG/JPEG · Min 250×150 px</p>
+            {uploading && (
+              <div className="mt-2 h-1.5 w-40 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-violet-400 rounded-full transition-all" style={{ width: `${progress}%` }} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Section>
   );
@@ -248,6 +250,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
   const router = useRouter();
   const { id } = use(params);
   const memberId = parseInt(id);
+  const isAdmin = getIsAdmin();
 
   const [member, setMember] = useState<Member | null>(null);
   const [groups, setGroups] = useState<OrgGroup[]>([]);
@@ -303,10 +306,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         .filter((m) => m.name.trim())
         .reduce<Record<string, string>>((acc, m) => { acc[m.name.trim()] = m.value; return acc; }, {});
 
+      // Update sports/physical profile data (user_profiles table)
       const upd: UpdateMemberRequest = {
-        member_type: editState.memberType as MemberType,
-        name: editState.name.trim(),
-        email: editState.email || undefined,
         date_of_birth: editState.dob ? `${editState.dob}T00:00:00Z` : null,
         gender: editState.gender || undefined,
         phone_no: editState.phone || undefined,
@@ -319,7 +320,18 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
         shoe_size: editState.shoeSize ? parseFloat(editState.shoeSize) : null,
         other_metrics: Object.keys(otherMetrics).length ? otherMetrics : {},
       };
-      const updated = await api.updateMember(token, member.id, upd);
+
+      // Update name/email on the users table via the admin endpoint
+      await Promise.all([
+        api.updateMember(token, member.user_id, upd),
+        api.adminUpdateUser(token, member.user_id, {
+          name: editState.name.trim(),
+          email: editState.email || undefined,
+        }),
+      ]);
+
+      // Reload the full profile so the page reflects both updates
+      const updated = await api.getMember(token, member.user_id);
       setMember(updated);
       setEditMode(false);
       showToast("Profile updated!");
@@ -331,7 +343,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     if (!member) return;
     const token = getToken(); if (!token) return;
     try {
-      await api.deleteMember(token, member.id);
+      await api.deleteOrgUser(token, member.user_id);
       router.push("/organisation/list");
     } catch { showToast("Failed to delete member.", "error"); }
   };
@@ -351,7 +363,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
     </div>
   );
 
-  const typeOptions = ALL_MEMBER_TYPES.map((t) => ({ value: t, label: MEMBER_TYPE_LABELS[t] }));
   const sportOptions = PREDEFINED_SPORTS.map((s) => ({ value: s, label: s }));
   const genderOptions = GENDERS.map((g) => ({ value: g, label: g }));
 
@@ -383,16 +394,22 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           {/* Header */}
           <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
             <div className="flex items-center gap-3">
-              <span className="text-3xl">{MEMBER_TYPE_ICONS[member.member_type]}</span>
+              <span className="text-3xl">
+                {member.is_admin
+                  ? "👑"
+                  : (MEMBER_TYPE_ICONS[member.member_type as keyof typeof MEMBER_TYPE_ICONS] ?? "👤")}
+              </span>
               <div>
                 <h1 className="text-2xl font-semibold text-gray-800">{member.name}</h1>
-                <span className="inline-block mt-0.5 bg-violet-100 text-violet-700 text-xs font-medium px-2.5 py-1 rounded-full">
-                  {MEMBER_TYPE_LABELS[member.member_type]}
+                <span className={`inline-block mt-0.5 text-xs font-medium px-2.5 py-1 rounded-full ${member.is_admin ? "bg-blue-100 text-blue-700" : "bg-violet-100 text-violet-700"}`}>
+                  {member.is_admin
+                    ? "Admin"
+                    : (MEMBER_TYPE_LABELS[member.member_type as keyof typeof MEMBER_TYPE_LABELS] ?? member.role_name ?? "Member")}
                 </span>
               </div>
             </div>
             <div className="flex gap-2">
-              {!editMode ? (
+              {isAdmin && !editMode && (
                 <>
                   <button onClick={enterEdit} className="bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors shadow">
                     ✏ EDIT
@@ -401,7 +418,8 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
                     🗑 DELETE
                   </button>
                 </>
-              ) : (
+              )}
+              {isAdmin && editMode && (
                 <>
                   <button onClick={handleSave} disabled={saving} className="bg-green-500 hover:bg-green-600 disabled:opacity-60 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors shadow">
                     {saving ? "Saving…" : "✓ SAVE"}
@@ -419,7 +437,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           )}
 
           {/* Profile Image */}
-          <ProfileImageSection member={member} onUpdate={setMember} showToast={showToast} />
+          <ProfileImageSection member={member} onUpdate={setMember} showToast={showToast} isAdmin={isAdmin} />
 
           {/* Personal Profile */}
           {!editMode ? (
@@ -434,9 +452,6 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
             </Section>
           ) : editState && (
             <Section title="Personal Profile">
-              <EditFormField label="Member Type" required>
-                <FieldSelect value={editState.memberType} onChange={(v) => setField("memberType", v)} options={typeOptions} placeholder="Select type" />
-              </EditFormField>
               <EditFormField label="Name" required>
                 <FieldInput value={editState.name} onChange={(e) => setField("name", e.target.value)} placeholder="Full name" />
               </EditFormField>
@@ -521,7 +536,7 @@ export default function MemberDetailPage({ params }: { params: Promise<{ id: str
           )}
 
           {/* Groups (always visible, independent of edit mode) */}
-          <GroupsPanel member={member} groups={groups} onUpdate={setMember} showToast={showToast} />
+          <GroupsPanel member={member} groups={groups} onUpdate={setMember} showToast={showToast} isAdmin={isAdmin} />
 
           {/* Meta */}
           <div className="mt-4 flex gap-6 text-xs text-gray-400">

@@ -255,7 +255,7 @@ export default function AthletesPage() {
     if (!deleteTarget) return;
     const token = getToken(); if (!token) return;
     try {
-      await api.deleteMember(token, deleteTarget.id);
+      await api.deleteOrgUser(token, deleteTarget.user_id);
       setDeleteTarget(null);
       await load();
       showToast("Athlete deleted.");
@@ -345,7 +345,7 @@ export default function AthletesPage() {
                       <tr key={a.id} className={`border-b border-gray-50 hover:bg-violet-50/40 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}>
                         <td className="px-4 py-3 text-gray-500 text-xs">{fmt(a.created_at)}</td>
                         <td className="px-4 py-3">
-                          <button onClick={() => router.push(`/organisation/members/${a.id}`)} className="text-blue-500 hover:text-blue-700 hover:underline font-medium transition-colors">
+                          <button onClick={() => router.push(`/organisation/members/${a.user_id}`)} className="text-blue-500 hover:text-blue-700 hover:underline font-medium transition-colors">
                             {a.name}
                           </button>
                         </td>
@@ -356,7 +356,7 @@ export default function AthletesPage() {
                         <td className="px-4 py-3">
                           <ActionMenu
                             member={a}
-                            onView={() => router.push(`/organisation/members/${a.id}`)}
+                            onView={() => router.push(`/organisation/members/${a.user_id}`)}
                             onDelete={() => setDeleteTarget(a)}
                             onManageGroups={() => setManageGroupsMember(a)}
                           />

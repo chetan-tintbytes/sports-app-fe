@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, Suspense } from "react
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/utils/lib/api";
 import { getToken } from "@/utils/lib/auth";
-import { AnalysisRunWithPoints, AnalysisDataPoint } from "@/utils/types/index";
+import { AnalysisRunWithPoints, AnalysisDataPoint, VideoDetail} from "@/utils/types/index";
 
 // ── Types ──────────────────────────────────────────────────
 
@@ -34,6 +34,40 @@ const getSpeed = (p: AnalysisDataPoint, unit: Unit) =>
 const unitLabel = (unit: Unit) => (unit === "ms" ? "m/s" : "km/h");
 
 // ── Stat card ──────────────────────────────────────────────
+
+// ── Shared video header ─────────────────────────────────────────────────────
+
+function VideoHeader({ videoDetail, runnerName }: { videoDetail: VideoDetail; runnerName?: string }) {
+  return (
+    <div className="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+      <video
+        src={videoDetail.view_url}
+        controls
+        preload="metadata"
+        className="w-full max-h-52 bg-black object-contain"
+      />
+      <div className="px-4 py-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-gray-500 border-t border-gray-50">
+        <span>
+          <span className="font-medium text-gray-700">Video: </span>
+          {videoDetail.video.original_name}
+        </span>
+        {videoDetail.video.uploader_name && (
+          <span>
+            <span className="font-medium text-gray-700">Uploaded by: </span>
+            {videoDetail.video.uploader_name}
+          </span>
+        )}
+        {runnerName && (
+          <span>
+            <span className="font-medium text-gray-700">Analysis by: </span>
+            {runnerName}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function StatCard({ label, value, unit, color }: {
   label: string;
@@ -533,6 +567,7 @@ function AnalysisContent() {
   const videoId = searchParams.get("id");
 
   const [run, setRun] = useState<AnalysisRunWithPoints | null>(null);
+  const [videoDetail, setVideoDetail] = useState<VideoDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [unit, setUnit] = useState<Unit>("kmh");
@@ -546,8 +581,12 @@ function AnalysisContent() {
     }
     const fetch = async () => {
       try {
-        const data = await api.getAnalysisRun(token, Number(runId));
+        const [data, vid] = await Promise.all([
+          api.getAnalysisRun(token, Number(runId)),
+          videoId ? api.getVideo(token, Number(videoId)).catch(() => null) : Promise.resolve(null),
+        ]);
         setRun(data);
+        setVideoDetail(vid);
         setZoom({ startIdx: 0, endIdx: (data.data_points?.length ?? 1) - 1 });
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Failed to load analysis");
@@ -610,6 +649,10 @@ function AnalysisContent() {
           </svg>
           Back to Video
         </button>
+
+
+        {/* Source video + uploader / runner info */}
+        {videoDetail && <VideoHeader videoDetail={videoDetail} runnerName={run?.runner_name} />}
 
         {/* Header */}
         <div className="text-center">

@@ -4,15 +4,13 @@ import { useRouter } from "next/navigation";
 import { api } from "@/utils/lib/api";
 import { getToken } from "@/utils/lib/auth";
 import {
-  MemberType,
   MemberStats,
   OrgGroup,
   ALL_MEMBER_TYPES,
   MEMBER_TYPE_LABELS,
   MEMBER_TYPE_ICONS,
-  PREDEFINED_SPORTS,
-  GENDERS,
-  CreateMemberRequest,
+  Role,
+  CreateInvitationResponse,
 } from "@/utils/types";
 
 // ─── Shared mini-components ───────────────────────────────────────────────────
@@ -86,41 +84,13 @@ const Select = ({
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface FormState {
-  memberType: string;
+interface InviteFormState {
+  roleId: string;
   name: string;
   email: string;
-  dob: string;
-  gender: string;
-  phone: string;
-  mainSport: string;
-  otherSport: string;
-  height: string;
-  weight: string;
-  armSpan: string;
-  legLength: string;
-  shoeSize: string;
-  otherMetrics: { name: string; value: string }[];
-  groupId: string;
 }
 
-const emptyForm = (): FormState => ({
-  memberType: "",
-  name: "",
-  email: "",
-  dob: "",
-  gender: "",
-  phone: "",
-  mainSport: "",
-  otherSport: "",
-  height: "",
-  weight: "",
-  armSpan: "",
-  legLength: "",
-  shoeSize: "",
-  otherMetrics: [{ name: "", value: "" }],
-  groupId: "",
-});
+const emptyForm = (): InviteFormState => ({ roleId: "", name: "", email: "" });
 
 type View = "dashboard" | "add";
 
@@ -139,84 +109,118 @@ const colorMap: Record<string, string> = {
   remote_coach: "bg-pink-50 border-pink-100 text-rose-500",
 };
 
-// ─── Add Member Form ──────────────────────────────────────────────────────────
+// ─── Add Member Form (invitation-based) ──────────────────────────────────────
 
 const AddMemberForm = ({
-  groups,
   onBack,
   onSuccess,
 }: {
-  groups: OrgGroup[];
   onBack: () => void;
   onSuccess: () => void;
 }) => {
-  const [form, setForm] = useState<FormState>(emptyForm());
+  const [form, setForm] = useState<InviteFormState>(emptyForm());
+  const [roles, setRoles] = useState<Role[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [inviteResult, setInviteResult] = useState<CreateInvitationResponse | null>(null);
 
-  const set = (field: keyof FormState, value: string) =>
+  const set = (field: keyof InviteFormState, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    api.getRoles(token).then(setRoles).catch(() => {});
+  }, []);
+
   const handleSubmit = async () => {
-    if (!form.memberType) { setError("Member type is required."); return; }
+    if (!form.roleId) { setError("Role is required."); return; }
     if (!form.name.trim()) { setError("Name is required."); return; }
+    if (!form.email.trim()) { setError("Email is required."); return; }
     setError("");
     const token = getToken();
     if (!token) return;
     setSubmitting(true);
     try {
-      const otherMetrics = form.otherMetrics
-        .filter((m) => m.name.trim())
-        .reduce<Record<string, string>>((acc, m) => {
-          acc[m.name.trim()] = m.value;
-          return acc;
-        }, {});
-
-      const payload: CreateMemberRequest = {
-        member_type: form.memberType as MemberType,
+      const result = await api.createMember(token, {
         name: form.name.trim(),
-        email: form.email || undefined,
-        date_of_birth: form.dob ? `${form.dob}T00:00:00Z` : undefined,
-        gender: form.gender || undefined,
-        phone_no: form.phone || undefined,
-        main_sports: form.mainSport ? [form.mainSport] : [],
-        other_sports: form.otherSport ? [form.otherSport] : [],
-        height: form.height ? parseFloat(form.height) : undefined,
-        weight: form.weight ? parseFloat(form.weight) : undefined,
-        arm_span: form.armSpan ? parseFloat(form.armSpan) : undefined,
-        leg_length: form.legLength ? parseFloat(form.legLength) : undefined,
-        shoe_size: form.shoeSize ? parseFloat(form.shoeSize) : undefined,
-        other_metrics: Object.keys(otherMetrics).length ? otherMetrics : undefined,
-        group_ids: form.groupId ? [parseInt(form.groupId)] : [],
-      };
-
-      await api.createMember(token, payload);
-      onSuccess();
+        email: form.email.trim(),
+        role_id: parseInt(form.roleId),
+      });
+      setInviteResult(result);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to add member.");
+      setError(err instanceof Error ? err.message : "Failed to send invitation.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const sportOptions = PREDEFINED_SPORTS.map((s) => ({ value: s, label: s }));
-  const genderOptions = GENDERS.map((g) => ({ value: g, label: g }));
-  const typeOptions = ALL_MEMBER_TYPES.map((t) => ({
-    value: t,
-    label: MEMBER_TYPE_LABELS[t],
-  }));
-  const groupOptions = groups.map((g) => ({ value: String(g.id), label: g.name }));
+  const roleOptions = roles.map((r) => ({ value: String(r.id), label: r.name }));
+
+  // ── Success state ──
+  if (inviteResult) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-xl mx-auto">
+          <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 text-center">
+            <div className="text-4xl mb-4">✉️</div>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">Invitation Sent!</h2>
+            <p className="text-sm text-gray-500 mb-6">
+              <strong>{inviteResult.invitation.name}</strong> ({inviteResult.invitation.email}) has been invited as{" "}
+              <strong>{inviteResult.role.name}</strong>. They will receive a link to set their password.
+            </p>
+            {inviteResult.email_warning && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl text-left">
+                ⚠️ Email delivery warning: {inviteResult.email_warning}
+              </div>
+            )}
+            <div className="mb-6">
+              <p className="text-xs text-gray-500 mb-1 font-medium uppercase tracking-wide">Invite link (share manually if needed)</p>
+              <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-2">
+                <span className="text-xs text-gray-600 flex-1 truncate">{inviteResult.invite_link}</span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(inviteResult.invite_link)}
+                  className="text-violet-500 hover:text-violet-700 text-xs font-semibold flex-shrink-0"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-center">
+              <button
+                onClick={() => { setInviteResult(null); setForm(emptyForm()); }}
+                className="bg-violet-400 hover:bg-violet-500 text-white font-bold text-sm px-6 py-2.5 rounded-xl transition-colors shadow"
+              >
+                Invite Another
+              </button>
+              <button
+                onClick={onSuccess}
+                className="bg-gray-600 hover:bg-gray-700 text-white font-bold text-sm px-6 py-2.5 rounded-xl transition-colors shadow"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-xl mx-auto">
         <button
           onClick={onBack}
           className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-4 transition-colors"
         >
           ← Back
         </button>
-        <h1 className="text-2xl font-light text-gray-800 text-center mb-6">Add Member</h1>
+        <h1 className="text-2xl font-light text-gray-800 text-center mb-6">Invite Member</h1>
+
+        <p className="text-sm text-gray-500 text-center mb-6">
+          An invitation email will be sent. The member sets their own password when they accept.
+          Sports and physical data can be filled in on their profile page after joining.
+        </p>
 
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-xl">
@@ -225,184 +229,39 @@ const AddMemberForm = ({
         )}
 
         <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8">
-          {/* Member Type */}
-          <div className="mb-6">
-            <FormField label="Member type:" required>
+          <div className="divide-y divide-gray-50">
+            <FormField label="Role:" required>
               <Select
-                value={form.memberType}
-                onChange={(v) => set("memberType", v)}
-                options={typeOptions}
-                placeholder="Select member type"
+                value={form.roleId}
+                onChange={(v) => set("roleId", v)}
+                options={roleOptions}
+                placeholder={roles.length ? "Select role" : "Loading roles…"}
+              />
+            </FormField>
+            <FormField label="Name:" required>
+              <Input
+                value={form.name}
+                onChange={(e) => set("name", e.target.value)}
+                placeholder="Full name"
+              />
+            </FormField>
+            <FormField label="Email Address:" required>
+              <Input
+                type="email"
+                value={form.email}
+                onChange={(e) => set("email", e.target.value)}
+                placeholder="Email address"
               />
             </FormField>
           </div>
 
-          {/* Personal Profile */}
-          <div className="relative border border-gray-200 rounded-2xl p-6 mb-6">
-            <span className="absolute -top-3 left-4 bg-white px-2 text-sm font-semibold text-gray-700">
-              Personal Profile
-            </span>
-            <div className="divide-y divide-gray-50">
-              <FormField label="Name:" required>
-                <Input
-                  value={form.name}
-                  onChange={(e) => set("name", e.target.value)}
-                  placeholder="Full name"
-                />
-              </FormField>
-              <FormField label="Email Address:">
-                <Input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => set("email", e.target.value)}
-                  placeholder="Email address"
-                />
-              </FormField>
-              <FormField label="Date of Birth:">
-                <Input
-                  type="date"
-                  value={form.dob}
-                  onChange={(e) => set("dob", e.target.value)}
-                />
-              </FormField>
-              <FormField label="Gender:">
-                <Select
-                  value={form.gender}
-                  onChange={(v) => set("gender", v)}
-                  options={genderOptions}
-                  placeholder="Select gender"
-                />
-              </FormField>
-              <FormField label="Phone No:">
-                <Input
-                  value={form.phone}
-                  onChange={(e) => set("phone", e.target.value)}
-                  placeholder="Phone number"
-                />
-              </FormField>
-              <FormField label="Main Sports:">
-                <Select
-                  value={form.mainSport}
-                  onChange={(v) => set("mainSport", v)}
-                  options={sportOptions}
-                  placeholder="Select main sport"
-                />
-              </FormField>
-              <FormField label="Other Sports:">
-                <Select
-                  value={form.otherSport}
-                  onChange={(v) => set("otherSport", v)}
-                  options={sportOptions}
-                  placeholder="Select other sport"
-                />
-              </FormField>
-            </div>
-          </div>
-
-          {/* Physical Profile */}
-          <div className="relative border border-gray-200 rounded-2xl p-6 mb-6">
-            <span className="absolute -top-3 left-4 bg-white px-2 text-sm font-semibold text-gray-700">
-              Physical Profile
-            </span>
-            <div className="divide-y divide-gray-50">
-              <FormField label="Group / Team:">
-                <Select
-                  value={form.groupId}
-                  onChange={(v) => set("groupId", v)}
-                  options={groupOptions}
-                  placeholder={groups.length ? "Select group" : "No groups yet"}
-                />
-              </FormField>
-              {[
-                { key: "height", label: "Height:", unit: "cm" },
-                { key: "weight", label: "Weight:", unit: "kg" },
-                { key: "armSpan", label: "Arm Span:", unit: "cm" },
-                { key: "legLength", label: "Leg Length:", unit: "cm" },
-              ].map((f) => (
-                <FormField key={f.key} label={f.label}>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={form[f.key as keyof FormState] as string}
-                      onChange={(e) => set(f.key as keyof FormState, e.target.value)}
-                      placeholder={`Enter value`}
-                    />
-                    <span className="text-sm text-gray-500 flex-shrink-0 w-8">{f.unit}</span>
-                  </div>
-                </FormField>
-              ))}
-              <FormField label="Shoe Size:">
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value={form.shoeSize}
-                    onChange={(e) => set("shoeSize", e.target.value)}
-                    placeholder="Size"
-                  />
-                  <span className="text-sm text-gray-500 flex-shrink-0">cm</span>
-                </div>
-              </FormField>
-            </div>
-          </div>
-
-          {/* Other Metrics */}
-          <div className="relative border border-gray-200 rounded-2xl p-6 mb-8">
-            <span className="absolute -top-3 left-4 bg-white px-2 text-sm font-semibold text-gray-700">
-              Other Metrics
-            </span>
-            <div className="space-y-3">
-              {form.otherMetrics.map((m, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-sm text-gray-500 flex-shrink-0">{i + 1}.</span>
-                  <input
-                    value={m.name}
-                    onChange={(e) => {
-                      const updated = [...form.otherMetrics];
-                      updated[i].name = e.target.value;
-                      setForm((p) => ({ ...p, otherMetrics: updated }));
-                    }}
-                    placeholder="Metric name"
-                    className="flex-1 bg-gray-100 rounded-lg px-3.5 py-2.5 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-300 border-none"
-                  />
-                  <input
-                    value={m.value}
-                    onChange={(e) => {
-                      const updated = [...form.otherMetrics];
-                      updated[i].value = e.target.value;
-                      setForm((p) => ({ ...p, otherMetrics: updated }));
-                    }}
-                    placeholder="Value"
-                    className="w-28 bg-gray-100 rounded-lg px-3.5 py-2.5 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-300 border-none"
-                  />
-                  {i === form.otherMetrics.length - 1 && (
-                    <button
-                      onClick={() =>
-                        setForm((p) => ({
-                          ...p,
-                          otherMetrics: [...p.otherMetrics, { name: "", value: "" }],
-                        }))
-                      }
-                      className="text-xs text-blue-500 hover:text-blue-700 font-medium flex-shrink-0"
-                    >
-                      + Add
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex justify-center gap-3">
+          <div className="flex justify-center gap-3 mt-8">
             <button
               onClick={handleSubmit}
               disabled={submitting}
               className="bg-violet-400 hover:bg-violet-500 disabled:opacity-60 text-white font-bold text-sm px-8 py-3 rounded-xl transition-colors shadow"
             >
-              {submitting ? "Saving…" : "ADD"}
+              {submitting ? "Sending…" : "SEND INVITE"}
             </button>
             <button
               onClick={() => setForm(emptyForm())}
@@ -539,12 +398,11 @@ export default function OrganisationDashboard() {
   if (view === "add") {
     return (
       <AddMemberForm
-        groups={groups}
         onBack={() => setView("dashboard")}
         onSuccess={() => {
           setView("dashboard");
           loadData();
-          showToast("Member added successfully!");
+          showToast("Invitation sent!");
         }}
       />
     );

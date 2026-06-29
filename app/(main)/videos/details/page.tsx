@@ -12,6 +12,7 @@ import {
   HorizontalJumpRun,
   StepLengthRun,
   LateralShuffleRun,
+  Member,
 } from "@/utils/types/index";
 
 const formatSize = (bytes: number) => {
@@ -63,6 +64,33 @@ function ProcessModal({
   const [selected, setSelected] = useState<AnalysisType>("fly-run");
   const [heightInput, setHeightInput] = useState("");
   const [heightError, setHeightError] = useState("");
+
+  // Members with height data — loaded when vertical-leap is selected
+  const [membersWithHeight, setMembersWithHeight] = useState<Member[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [selectedMemberId, setSelectedMemberId] = useState("");
+
+  useEffect(() => {
+    if (selected !== "vertical-leap") return;
+    const token = getToken();
+    if (!token) return;
+    setLoadingMembers(true);
+    api.getMembers(token)
+      .then((all) => setMembersWithHeight(all.filter((m) => m.height != null)))
+      .catch(() => {})
+      .finally(() => setLoadingMembers(false));
+  }, [selected]);
+
+  const handleMemberSelect = (memberId: string) => {
+    setSelectedMemberId(memberId);
+    if (memberId) {
+      const m = membersWithHeight.find((m) => String(m.user_id) === memberId);
+      if (m?.height != null) {
+        setHeightInput(String(m.height));
+        setHeightError("");
+      }
+    }
+  };
 
   const handleConfirm = () => {
     if (selected === "fly-run" || selected === "fly-run2") {
@@ -179,25 +207,67 @@ function ProcessModal({
           ))}
         </div>
 
-        {/* Height input — only for vertical-leap */}
+        {/* Vertical-leap: member picker + editable height */}
         {selected === "vertical-leap" && (
-          <div className="mb-4">
-            <label className="block text-xs font-semibold text-gray-600 mb-1.5">
-              Athlete height (cm)
-            </label>
-            <input
-              type="number"
-              placeholder="e.g. 175"
-              value={heightInput}
-              onChange={(e) => { setHeightInput(e.target.value); setHeightError(""); }}
-              disabled={processing}
-              min={1}
-              max={300}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400 disabled:opacity-50"
-            />
-            {heightError && (
-              <p className="text-xs text-red-500 mt-1.5">{heightError}</p>
-            )}
+          <div className="mb-4 space-y-3">
+
+            {/* Member dropdown — only shows members who have a height on their profile */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                Select athlete
+              </label>
+              {loadingMembers ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                  <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" opacity=".25"/>
+                    <path d="M12 3a9 9 0 019 9"/>
+                  </svg>
+                  Loading members…
+                </div>
+              ) : membersWithHeight.length > 0 ? (
+                <select
+                  value={selectedMemberId}
+                  onChange={(e) => handleMemberSelect(e.target.value)}
+                  disabled={processing}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
+                >
+                  <option value="">— Enter height manually —</option>
+                  {membersWithHeight.map((m) => (
+                    <option key={m.user_id} value={String(m.user_id)}>
+                      {m.name} — {m.height} cm
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-xs text-gray-400 py-1">
+                  No members with height data found. Add heights via member profiles.
+                </p>
+              )}
+            </div>
+
+            {/* Height field — always editable; auto-filled when a member is selected */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1.5">
+                Athlete height (cm)
+                {selectedMemberId && (
+                  <span className="ml-1.5 font-normal text-blue-500">auto-filled — edit if needed</span>
+                )}
+              </label>
+              <input
+                type="number"
+                placeholder="e.g. 175"
+                value={heightInput}
+                onChange={(e) => { setHeightInput(e.target.value); setHeightError(""); }}
+                disabled={processing}
+                min={1}
+                max={300}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400 disabled:opacity-50"
+              />
+              {heightError && (
+                <p className="text-xs text-red-500 mt-1.5">{heightError}</p>
+              )}
+            </div>
+
           </div>
         )}
 

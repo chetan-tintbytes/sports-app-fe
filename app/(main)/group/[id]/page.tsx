@@ -324,7 +324,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                       ) : paginated.map((m, i) => (
                         <tr key={m.id} className={`border-b border-gray-50 hover:bg-violet-50/40 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}>
                           <td className="px-4 py-3">
-                            <button onClick={() => router.push(`/organisation/members/${m.id}`)} className="flex items-center gap-2 text-blue-500 hover:text-blue-700 hover:underline font-medium transition-colors text-left">
+                            <button onClick={() => router.push(`/organisation/members/${m.user_id}`)} className="flex items-center gap-2 text-blue-500 hover:text-blue-700 hover:underline font-medium transition-colors text-left">
                               <span className="text-base">{MEMBER_TYPE_ICONS[m.member_type]}</span>
                               {m.name}
                             </button>
@@ -340,7 +340,7 @@ export default function GroupDetailPage({ params }: { params: Promise<{ id: stri
                           <td className="px-4 py-3">
                             <RowAction
                               member={m}
-                              onView={() => router.push(`/organisation/members/${m.id}`)}
+                              onView={() => router.push(`/organisation/members/${m.user_id}`)}
                               onRemove={() => setRemoveTarget(m)}
                             />
                           </td>

@@ -1,10 +1,22 @@
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export type UserStatus = "active" | "invited" | "inactive";
+
 export interface User {
   id: number;
   email: string;
   name: string;
   profile_image_key: string;
   profile_image_url?: string;
+  /** Every account created via /auth/signup is an admin. */
+  is_admin: boolean;
+  /** null for admin accounts; set by admin when inviting */
+  role_id?: number | null;
+  role_name?: string;
+  organisation_id?: number | null;
+  status: UserStatus;
   created_at: string;
+  updated_at: string;
 }
 
 export interface UpdateProfileRequest {
@@ -46,7 +58,88 @@ export interface ResetPasswordRequest {
   password: string;
 }
 
-// ── Media ──────────────────────────────────────────────────
+// ── Roles ──────────────────────────────────────────────────────────────────────
+
+export interface Role {
+  id: number;
+  name: string;
+  /** false = predefined (read-only), true = admin-created (editable/deletable) */
+  is_custom: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateRoleRequest {
+  name: string;
+}
+
+export interface UpdateRoleRequest {
+  name: string;
+}
+
+// ── Invitations ────────────────────────────────────────────────────────────────
+
+export interface Invitation {
+  id: number;
+  email: string;
+  name: string;
+  role_id: number;
+  role_name?: string;
+  organisation_id: number;
+  invited_by_id: number;
+  /** Included in create response so admin can share manually */
+  token?: string;
+  expires_at: string;
+  accepted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateInvitationRequest {
+  email: string;
+  name: string;
+  role_id: number;
+}
+
+/**
+ * @deprecated The add-member flow is now invitation-based.
+ * Maps to CreateInvitationRequest — member_type has been replaced by role_id.
+ */
+export interface CreateMemberRequest {
+  name: string;
+  email: string;
+  role_id: number;
+}
+
+export interface CreateInvitationResponse {
+  invitation: Invitation;
+  role: Role;
+  invite_link: string;
+  email_warning?: string;
+}
+
+export interface AcceptInviteRequest {
+  token: string;
+  password: string;
+}
+
+/** Returned by GET /auth/invite?token= (public, no auth) */
+export interface InviteInfo {
+  email: string;
+  name: string;
+  role_name: string;
+}
+
+// ── Admin ──────────────────────────────────────────────────────────────────────
+
+export interface AdminUpdateUserRequest {
+  name?: string;
+  email?: string;
+  role_id?: number | null;
+  status?: "active" | "inactive";
+}
+
+// ── Media ──────────────────────────────────────────────────────────────────────
 
 export interface Folder {
   id: number;
@@ -80,6 +173,8 @@ export interface Video {
   content_type: string;
   uploaded_at: string;
   updated_at: string;
+  /** Populated by GET /videos/:id (org-aware) */
+  uploader_name?: string;
 }
 
 export interface FolderContents {
@@ -105,19 +200,22 @@ export interface VideoDetail {
   view_url: string;
 }
 
-// ── Analysis ───────────────────────────────────────────────
+// ── Analysis — Core ────────────────────────────────────────────────────────────
 
 export type AnalysisType =
   | "fly-run"
   | "vertical-leap"
-  | "fly-run2"
   | "horizontal-jump"
-  | "horizontal-jump2"
   | "step-length"
-  | "lateral-shuffle";
+  | "lateral-shuffle"
+  | "single-leg-hop";
 
 export type AnalysisStatus = "pending" | "processing" | "completed" | "failed";
 
+/**
+ * Unified analysis run — one row covers every analysis type.
+ * Type-specific metrics live inside `result.result_data`.
+ */
 export interface AnalysisRun {
   id: number;
   video_id: number;
@@ -125,15 +223,32 @@ export interface AnalysisRun {
   analysis_type: AnalysisType;
   status: AnalysisStatus;
   error_message?: string;
-  max_speed_ms: number;
-  min_speed_ms: number;
-  avg_speed_ms: number;
-  max_speed_kmh: number;
-  min_speed_kmh: number;
-  avg_speed_kmh: number;
+  result?: AnalysisResultEnvelope;
+  created_at: string;
+  updated_at: string;
+  /** Name of the user who ran the analysis (populated by GET /analysis/runs/:runId) */
+  runner_name?: string;
+  /** Name of the user who uploaded the video (populated by GET /analysis/runs/:runId) */
+  uploader_name?: string;
+}
+
+/** The JSONB envelope stored in analysis_results. */
+export interface AnalysisResultEnvelope {
+  id: number;
+  run_id: number;
+  /** Parsed shape depends on analysis_type — see typed result interfaces below. */
+  result_data:
+    | FlyRunResult
+    | VerticalLeapResult
+    | HorizontalJumpResult
+    | StepLengthResult
+    | LateralShuffleResult
+    | Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
+
+// ── Analysis — Result shapes ───────────────────────────────────────────────────
 
 export interface AnalysisDataPoint {
   id: number;
@@ -143,106 +258,36 @@ export interface AnalysisDataPoint {
   speed_kmh: number;
 }
 
-export interface AnalysisRunWithPoints extends AnalysisRun {
-  data_points: AnalysisDataPoint[];
+export interface FlyRunResult {
+  max_speed_ms: number;
+  min_speed_ms: number;
+  avg_speed_ms: number;
+  max_speed_kmh: number;
+  min_speed_kmh: number;
+  avg_speed_kmh: number;
+  /** Present only on GET /analysis/runs/:id for fly-run. */
+  data_points?: AnalysisDataPoint[];
 }
 
-export interface ProcessVideoRequest {
-  analysis_type: AnalysisType;
-}
-
-// ── Reports ────────────────────────────────────────────────
-
-export interface ReportRow {
-  run_id: number;
-  video_id: number;
-  original_name: string;
-  report_type:
-    | "fly-run"
-    | "vertical-leap"
-    | "horizontal-jump"
-    | "horizontal-jump2"
-    | "step-length"
-    | "lateral-shuffle";
-  height_cm?: number;
-  jump_height_cm?: number;
-  flight_time_s?: number;
-  jump_distance_cm?: number;
-  step_count?: number;
-  avg_step_length_cm?: number;
-  avg_stride_length_cm?: number;
-  avg_cadence_steps_min?: number;
-  shuffle_count?: number;
-  shuffles_per_side_left?: number;
-  shuffles_per_side_right?: number;
-  avg_shuffle_width_cm?: number;
-  left_avg_width_cm?: number;
-  right_avg_width_cm?: number;
-  symmetry_pct?: number;
-  avg_shuffle_speed_cm_s?: number;
-  avg_transition_time_s?: number;
-  cadence_shuffles_min?: number;
-  active_duration_s?: number;
-  created_at: string;
-}
-
-// ── Vertical Leap ──────────────────────────────────────────
-
-export interface VerticalLeapRun {
-  id: number;
-  video_id: number;
-  user_id: number;
-  status: AnalysisStatus;
-  error_message?: string;
+export interface VerticalLeapResult {
   height_cm: number;
   jump_height_cm: number;
   flight_time_s: number;
-  created_at: string;
-  updated_at: string;
 }
 
-export interface ProcessVerticalLeapRequest {
-  height_cm: number;
-}
-
-// ── Horizontal Jump ────────────────────────────────────────
-
-export interface HorizontalJumpRun {
-  id: number;
-  video_id: number;
-  user_id: number;
-  status: AnalysisStatus;
-  error_message?: string;
+export interface HorizontalJumpResult {
   jump_distance_cm: number;
   flight_time_s: number;
-  created_at: string;
-  updated_at: string;
 }
 
-// ── Step Length ────────────────────────────────────────────
-
-export interface StepLengthRun {
-  id: number;
-  video_id: number;
-  user_id: number;
-  status: AnalysisStatus;
-  error_message?: string;
+export interface StepLengthResult {
   step_count: number;
   avg_step_length_cm: number;
   avg_stride_length_cm: number;
   avg_cadence_steps_min: number;
-  created_at: string;
-  updated_at: string;
 }
 
-// ── Lateral Shuffle ────────────────────────────────────────
-
-export interface LateralShuffleRun {
-  id: number;
-  video_id: number;
-  user_id: number;
-  status: AnalysisStatus;
-  error_message?: string;
+export interface LateralShuffleResult {
   shuffle_count: number;
   shuffles_per_side_left: number;
   shuffles_per_side_right: number;
@@ -254,11 +299,152 @@ export interface LateralShuffleRun {
   avg_transition_time_s: number;
   cadence_shuffles_min: number;
   active_duration_s: number;
+}
+
+// ── Analysis — Flattened backward-compat types ────────────────────────────────
+// The API client merges result_data fields to the top level of each run so
+// existing pages (e.g. vertical-leap page accessing run.jump_height_cm) continue
+// to work without modification.
+
+export interface AnalysisRunWithPoints extends AnalysisRun, FlyRunResult {
+  /** Convenience flat access; mirrors result.result_data.data_points */
+  data_points: AnalysisDataPoint[];
+}
+
+export interface VerticalLeapRun extends AnalysisRun, VerticalLeapResult {}
+export interface HorizontalJumpRun extends AnalysisRun, HorizontalJumpResult {}
+export interface StepLengthRun extends AnalysisRun, StepLengthResult {}
+export interface LateralShuffleRun extends AnalysisRun, LateralShuffleResult {}
+
+export interface ProcessVideoRequest {
+  analysis_type: AnalysisType;
+}
+
+export interface ProcessVerticalLeapRequest {
+  height_cm: number;
+}
+
+// ── Reports ────────────────────────────────────────────────────────────────────
+
+/**
+ * One row from GET /reports.
+ * result_data shape depends on analysis_type — cast using the typed result
+ * interfaces above (e.g. `row.result_data as FlyRunResult`).
+ */
+export interface ReportRow {
+  run_id: number;
+  video_id: number;
+  original_name: string;
+  analysis_type: AnalysisType;
+  status: AnalysisStatus;
+  result_data?: Record<string, unknown>;
+  /** Name of the user who ran the analysis. */
+  user_name: string;
+  /** Name of the user who uploaded the video. */
+  uploader_name: string;
+  created_at: string;
+}
+
+// ── Organisation ───────────────────────────────────────────────────────────────
+
+export interface Organisation {
+  id: number;
+  /** The admin user who owns/created this organisation. Renamed from user_id. */
+  admin_user_id: number;
+  name: string;
   created_at: string;
   updated_at: string;
 }
 
-// ── Team Management ────────────────────────────────────────
+export interface OrgGroup {
+  id: number;
+  organisation_id: number;
+  name: string;
+  description: string;
+  member_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateGroupRequest {
+  name: string;
+  description: string;
+}
+
+export interface UpdateGroupRequest {
+  name?: string;
+  description?: string;
+}
+
+// ── UserProfile (replaces Member) ─────────────────────────────────────────────
+// Linked to a platform user account via user_id.
+// Contains sports/physical data managed by the admin.
+
+export interface UserProfile {
+  id: number;
+  /** FK → users.id */
+  user_id: number;
+  organisation_id: number;
+  profile_image_key: string;
+  profile_image_url?: string;
+  // User-level fields (joined from users + roles by the backend)
+  name: string;
+  email: string;
+  /** True when the user is the org admin (has no member role). */
+  is_admin: boolean;
+  /** Display name of the role, e.g. "Health Staff" */
+  role_name: string;
+  /** Snake-case slug of the role, e.g. "health_staff". Matches MemberType values. */
+  member_type: string;
+  // Sports-profile fields
+  date_of_birth: string | null;
+  gender: string;
+  phone_no: string;
+  main_sports: string[];
+  other_sports: string[];
+  height: number | null;
+  weight: number | null;
+  arm_span: number | null;
+  leg_length: number | null;
+  shoe_size: number | null;
+  other_metrics: Record<string, unknown>;
+  groups: OrgGroup[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** @deprecated Use UserProfile. Kept as alias for page backward compat. */
+export type Member = UserProfile;
+
+export interface UpdateUserProfileRequest {
+  profile_image_key?: string;
+  date_of_birth?: string | null;
+  gender?: string;
+  phone_no?: string;
+  main_sports?: string[];
+  other_sports?: string[];
+  height?: number | null;
+  weight?: number | null;
+  arm_span?: number | null;
+  leg_length?: number | null;
+  shoe_size?: number | null;
+  other_metrics?: Record<string, unknown>;
+}
+
+/** @deprecated Use UpdateUserProfileRequest. Kept as alias for page backward compat. */
+export type UpdateMemberRequest = UpdateUserProfileRequest;
+
+// ── Stats ──────────────────────────────────────────────────────────────────────
+
+export interface OrgStats {
+  total_users: number;
+  by_role: Record<string, number>;
+}
+
+/** @deprecated Use OrgStats. Kept as alias. */
+export type MemberStats = OrgStats & { total: number; by_type: Record<string, number> };
+
+// ── Role / member type constants (kept for UI labels/icons) ───────────────────
 
 export type MemberType =
   | "coach"
@@ -296,120 +482,13 @@ export const MEMBER_TYPE_ICONS: Record<MemberType, string> = {
 };
 
 export const ALL_MEMBER_TYPES: MemberType[] = [
-  "coach",
-  "athlete",
-  "analyst",
-  "health_staff",
-  "student",
-  "patient",
-  "player",
-  "account_admin_manager",
-  "remote_coach",
+  "coach", "athlete", "analyst", "health_staff",
+  "student", "patient", "player", "account_admin_manager", "remote_coach",
 ];
 
 export const PREDEFINED_SPORTS = [
-  "Football",
-  "Cricket",
-  "Basketball",
-  "Swimming",
-  "Athletics",
-  "Badminton",
-  "Tennis",
-  "Hockey",
-  "Volleyball",
+  "Football", "Cricket", "Basketball", "Swimming",
+  "Athletics", "Badminton", "Tennis", "Hockey", "Volleyball",
 ];
 
 export const GENDERS = ["Male", "Female", "Non-binary", "Prefer not to say"];
-
-export interface Organisation {
-  id: number;
-  user_id: number;
-  name: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface OrgGroup {
-  id: number;
-  organisation_id: number;
-  name: string;
-  description: string;
-  member_count: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Member {
-  id: number;
-  organisation_id: number;
-  member_type: MemberType;
-  profile_image_key: string;
-  profile_image_url?: string;
-  name: string;
-  email: string;
-  date_of_birth: string | null;
-  gender: string;
-  phone_no: string;
-  main_sports: string[];
-  other_sports: string[];
-  height: number | null;
-  weight: number | null;
-  arm_span: number | null;
-  leg_length: number | null;
-  shoe_size: number | null;
-  other_metrics: Record<string, string>;
-  groups: OrgGroup[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MemberStats {
-  total: number;
-  by_type: Record<string, number>;
-}
-
-export interface CreateMemberRequest {
-  member_type: MemberType;
-  name: string;
-  email?: string;
-  date_of_birth?: string;
-  gender?: string;
-  phone_no?: string;
-  main_sports?: string[];
-  other_sports?: string[];
-  height?: number;
-  weight?: number;
-  arm_span?: number;
-  leg_length?: number;
-  shoe_size?: number;
-  other_metrics?: Record<string, string>;
-  group_ids?: number[];
-}
-
-export interface UpdateMemberRequest {
-  member_type?: MemberType;
-  profile_image_key?: string;
-  name?: string;
-  email?: string;
-  date_of_birth?: string | null;
-  gender?: string;
-  phone_no?: string;
-  main_sports?: string[];
-  other_sports?: string[];
-  height?: number | null;
-  weight?: number | null;
-  arm_span?: number | null;
-  leg_length?: number | null;
-  shoe_size?: number | null;
-  other_metrics?: Record<string, string>;
-}
-
-export interface CreateGroupRequest {
-  name: string;
-  description: string;
-}
-
-export interface UpdateGroupRequest {
-  name?: string;
-  description?: string;
-}

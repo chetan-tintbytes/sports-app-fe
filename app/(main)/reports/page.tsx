@@ -93,9 +93,10 @@ const LateralShuffleIcon = () => (
 
 const COLUMNS = [
   "REPORT NAME",
-  "VIDEO",
   "ANALYSIS TYPE",
   "RESULT",
+  "RAN BY",
+  "UPLOADED BY",
   "DATE",
   "ACTION",
 ];
@@ -116,66 +117,81 @@ type FilterKey = typeof FILTER_OPTIONS[number]["key"];
 // ── Result cell — renders differently per report type ──────
 
 function ResultCell({ report }: { report: ReportRow }) {
-  if (report.report_type === "vertical-leap") {
+  // result_data is a nested JSON object from the backend
+  const rd = (report.result_data ?? {}) as Record<string, number>;
+
+  if (report.analysis_type === "vertical-leap") {
     return (
       <div className="flex flex-col gap-0.5">
         <span className="text-sm font-semibold text-emerald-600">
-          {round2(report.jump_height_cm ?? 0)} cm
+          {round2(rd.jump_height_cm ?? 0)} cm
           <span className="text-xs font-normal text-gray-400 ml-1">jump</span>
         </span>
         <span className="text-xs text-gray-400">
-          {round2(report.flight_time_s ?? 0)} s flight
+          {round2(rd.flight_time_s ?? 0)} s flight
         </span>
       </div>
     );
   }
 
-  if (report.report_type === "horizontal-jump") {
+  if (report.analysis_type === "horizontal-jump") {
     return (
       <div className="flex flex-col gap-0.5">
         <span className="text-sm font-semibold text-sky-600">
-          {round2(report.jump_distance_cm ?? 0)} cm
+          {round2(rd.jump_distance_cm ?? 0)} cm
           <span className="text-xs font-normal text-gray-400 ml-1">distance</span>
         </span>
         <span className="text-xs text-gray-400">
-          {round2(report.flight_time_s ?? 0)} s flight
+          {round2(rd.flight_time_s ?? 0)} s flight
         </span>
       </div>
     );
   }
 
-  if (report.report_type === "step-length") {
+  if (report.analysis_type === "step-length") {
     return (
       <div className="flex flex-col gap-0.5">
         <span className="text-sm font-semibold text-teal-600">
-          {round2(report.avg_step_length_cm ?? 0)} cm
+          {round2(rd.avg_step_length_cm ?? 0)} cm
           <span className="text-xs font-normal text-gray-400 ml-1">avg step</span>
         </span>
         <span className="text-xs text-gray-400">
-          {report.step_count ?? 0} steps detected
+          {rd.step_count ?? 0} steps detected
         </span>
       </div>
     );
   }
 
-  if (report.report_type === "lateral-shuffle") {
+  if (report.analysis_type === "lateral-shuffle") {
     return (
       <div className="flex flex-col gap-0.5">
         <span className="text-sm font-semibold text-orange-600">
-          {report.shuffle_count ?? 0} shuffles
+          {rd.shuffle_count ?? 0} shuffles
           <span className="text-xs font-normal text-gray-400 ml-1">total</span>
         </span>
         <span className="text-xs text-gray-400">
-          {round2(report.symmetry_pct ?? 0)}% symmetry
+          {round2(rd.symmetry_pct ?? 0)}% symmetry
         </span>
       </div>
     );
   }
 
   // fly-run
-  return (
-    <span className="text-sm text-gray-400 italic">Speed analysis</span>
-  );
+  const maxSpeedKmh = rd.max_speed_kmh ?? 0;
+  if (maxSpeedKmh > 0) {
+    return (
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-semibold text-blue-600">
+          {round2(maxSpeedKmh)} km/h
+          <span className="text-xs font-normal text-gray-400 ml-1">max</span>
+        </span>
+        <span className="text-xs text-gray-400">
+          avg {round2(rd.avg_speed_kmh ?? 0)} km/h
+        </span>
+      </div>
+    );
+  }
+  return <span className="text-sm text-gray-400 italic">Speed analysis</span>;
 }
 
 // ── Component ──────────────────────────────────────────────
@@ -199,7 +215,7 @@ export default function Reports() {
     setError("");
     try {
       const data = await api.getReports(token);
-      setReports(data.reports ?? []);
+      setReports(data ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load reports");
     } finally {
@@ -219,10 +235,12 @@ export default function Reports() {
   const filtered = reports.filter((r) => {
     const matchesSearch =
       r.original_name.toLowerCase().includes(q) ||
-      ANALYSIS_LABEL[r.report_type]?.toLowerCase().includes(q);
+      ANALYSIS_LABEL[r.analysis_type]?.toLowerCase().includes(q) ||
+      r.user_name?.toLowerCase().includes(q) ||
+      r.uploader_name?.toLowerCase().includes(q);
 
     const matchesFilter =
-      activeFilter === "all" || r.report_type === activeFilter;
+      activeFilter === "all" || r.analysis_type === activeFilter;
 
     return matchesSearch && matchesFilter;
   });
@@ -244,13 +262,13 @@ export default function Reports() {
   // ── Action routing per type ──────────────────────────────
 
   const handleViewResults = (report: ReportRow) => {
-    if (report.report_type === "vertical-leap") {
+    if (report.analysis_type === "vertical-leap") {
       router.push(`/videos/vertical-leap?id=${report.video_id}&runId=${report.run_id}`);
-    } else if (report.report_type === "horizontal-jump") {
+    } else if (report.analysis_type === "horizontal-jump") {
       router.push(`/videos/horizontal-jump?id=${report.video_id}&runId=${report.run_id}`);
-    } else if (report.report_type === "step-length") {
+    } else if (report.analysis_type === "step-length") {
       router.push(`/videos/step-length?id=${report.video_id}&runId=${report.run_id}`);
-    } else if (report.report_type === "lateral-shuffle") {
+    } else if (report.analysis_type === "lateral-shuffle") {
       router.push(`/videos/lateral-shuffle?id=${report.video_id}&runId=${report.run_id}`);
     } else {
       router.push(`/videos/analysis?id=${report.video_id}&runId=${report.run_id}`);
@@ -382,7 +400,7 @@ export default function Reports() {
                 ) : (
                   paginated.map((report, i) => (
                     <tr
-                      key={`${report.report_type}-${report.run_id}`}
+                      key={`${report.analysis_type}-${report.run_id}`}
                       className={`border-b border-gray-100 transition-colors hover:bg-purple-50/40 ${
                         i % 2 === 0 ? "bg-white" : "bg-gray-50/50"
                       }`}
@@ -395,21 +413,26 @@ export default function Reports() {
                         </span>
                       </td>
 
-                      {/* Video name */}
-                      <td className="px-4 py-4 text-gray-600 max-w-[180px] truncate">
-                        <span title={report.original_name}>{report.original_name}</span>
-                      </td>
-
                       {/* Analysis type tag */}
                       <td className="px-4 py-4">
-                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ANALYSIS_TAG_COLOR[report.report_type] ?? "bg-gray-100 text-gray-600"}`}>
-                          {ANALYSIS_LABEL[report.report_type] ?? report.report_type}
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${ANALYSIS_TAG_COLOR[report.analysis_type] ?? "bg-gray-100 text-gray-600"}`}>
+                          {ANALYSIS_LABEL[report.analysis_type] ?? report.analysis_type}
                         </span>
                       </td>
 
                       {/* Result */}
                       <td className="px-4 py-4">
                         <ResultCell report={report} />
+                      </td>
+
+                      {/* Ran By */}
+                      <td className="px-4 py-4 text-gray-600 text-sm whitespace-nowrap">
+                        {report.user_name || "—"}
+                      </td>
+
+                      {/* Uploaded By */}
+                      <td className="px-4 py-4 text-gray-600 text-sm whitespace-nowrap">
+                        {report.uploader_name || "—"}
                       </td>
 
                       {/* Date */}
@@ -423,7 +446,7 @@ export default function Reports() {
                           onClick={() => handleViewResults(report)}
                           className="flex items-center gap-2 text-xs font-bold tracking-widest uppercase px-4 py-2 rounded-full border-2 border-[#8B5CF6] text-[#8B5CF6] hover:bg-[#8B5CF6] hover:text-white transition-all whitespace-nowrap"
                         >
-                          {getViewIcon(report.report_type)}
+                          {getViewIcon(report.analysis_type)}
                           View Results
                         </button>
                       </td>
