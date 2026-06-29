@@ -204,8 +204,10 @@ export interface VideoDetail {
 
 export type AnalysisType =
   | "fly-run"
+  | "fly-run2"
   | "vertical-leap"
   | "horizontal-jump"
+  | "horizontal-jump2"
   | "step-length"
   | "lateral-shuffle"
   | "single-leg-hop";
@@ -395,7 +397,7 @@ export interface UserProfile {
   /** Display name of the role, e.g. "Health Staff" */
   role_name: string;
   /** Snake-case slug of the role, e.g. "health_staff". Matches MemberType values. */
-  member_type: string;
+  member_type: MemberType;
   // Sports-profile fields
   date_of_birth: string | null;
   gender: string;
@@ -442,7 +444,10 @@ export interface OrgStats {
 }
 
 /** @deprecated Use OrgStats. Kept as alias. */
-export type MemberStats = OrgStats & { total: number; by_type: Record<string, number> };
+export type MemberStats = OrgStats & {
+  total: number;
+  by_type: Record<string, number>;
+};
 
 // ── Role / member type constants (kept for UI labels/icons) ───────────────────
 
@@ -482,13 +487,27 @@ export const MEMBER_TYPE_ICONS: Record<MemberType, string> = {
 };
 
 export const ALL_MEMBER_TYPES: MemberType[] = [
-  "coach", "athlete", "analyst", "health_staff",
-  "student", "patient", "player", "account_admin_manager", "remote_coach",
+  "coach",
+  "athlete",
+  "analyst",
+  "health_staff",
+  "student",
+  "patient",
+  "player",
+  "account_admin_manager",
+  "remote_coach",
 ];
 
 export const PREDEFINED_SPORTS = [
-  "Football", "Cricket", "Basketball", "Swimming",
-  "Athletics", "Badminton", "Tennis", "Hockey", "Volleyball",
+  "Football",
+  "Cricket",
+  "Basketball",
+  "Swimming",
+  "Athletics",
+  "Badminton",
+  "Tennis",
+  "Hockey",
+  "Volleyball",
 ];
 
 export const GENDERS = ["Male", "Female", "Non-binary", "Prefer not to say"];
