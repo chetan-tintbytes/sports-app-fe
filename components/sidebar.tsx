@@ -41,6 +41,7 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({
     ORGANISATION: true,
+    VIDEOS: true,
   });
   const [user, setUser] = useState<User | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -70,7 +71,16 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
 
   const adminMenuItems: MenuItem[] = [
     { icon: Upload, label: "IMPORT/UPLOAD VIDEOS", path: "/upload" },
-    { icon: Video, label: "ALL VIDEOS", path: "/videos" },
+    {
+      icon: Video,
+      label: "VIDEOS",
+      path: "/videos",
+      hasSubmenu: true,
+      subItems: [
+        { label: "My Videos", path: "/videos/my-videos" },
+        { label: "All Videos", path: "/videos/all" },
+      ],
+    },
     {
       icon: Building2,
       label: "ORGANISATION",
@@ -89,7 +99,7 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
 
   const memberMenuItems: MenuItem[] = [
     { icon: Upload, label: "IMPORT/UPLOAD VIDEOS", path: "/upload" },
-    { icon: Video, label: "ALL VIDEOS", path: "/videos" },
+    { icon: Video, label: "VIDEOS", path: "/videos/my-videos" },
     { icon: Users, label: "MEMBERS", path: "/organisation/list" },
     { icon: BarChart3, label: "REPORTS", path: "/reports" },
     { icon: BookOpen, label: "USER GUIDE", path: "/guide" },

@@ -14,6 +14,7 @@ import {
   UpdateMemberRequest,
   Role,
   CreateInvitationResponse,
+  ProvisionMode,
 } from "@/utils/types";
 import { createPortal } from "react-dom";
 
@@ -74,6 +75,10 @@ interface FormState {
   shoeSize: string;
   otherMetrics: { name: string; value: string }[];
   groupId: string;
+  /** How the account is provisioned when adding a member. */
+  provisionMode: ProvisionMode;
+  /** Admin-set password (credentials mode only). Empty = server auto-generates. */
+  password: string;
 }
 
 const emptyForm = (): FormState => ({
@@ -81,6 +86,7 @@ const emptyForm = (): FormState => ({
   phone: "", mainSport: "", otherSport: "", height: "", weight: "",
   armSpan: "", legLength: "", shoeSize: "",
   otherMetrics: [{ name: "", value: "" }], groupId: "",
+  provisionMode: "invite", password: "",
 });
 
 const memberToForm = (m: Member): FormState => ({
@@ -99,7 +105,16 @@ const memberToForm = (m: Member): FormState => ({
   shoeSize: m.shoe_size != null ? String(m.shoe_size) : "",
   otherMetrics: Object.entries(m.other_metrics ?? {}).map(([n, v]) => ({ name: n, value: String(v) })).concat([{ name: "", value: "" }]),
   groupId: "",
+  provisionMode: "invite", password: "",
 });
+
+// Client-side strong password generator (unambiguous alphabet).
+const generatePassword = (len = 14): string => {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const arr = new Uint32Array(len);
+  (window.crypto ?? crypto).getRandomValues(arr);
+  return Array.from(arr, (n) => alphabet[n % alphabet.length]).join("");
+};
 
 // ─── Member form (shared by Add & Edit) ──────────────────────────────────────
 
@@ -112,6 +127,7 @@ const MemberForm = ({
   submitLabel,
   submitting,
   error,
+  showProvisioning,
 }: {
   initial: FormState;
   groups: OrgGroup[];
@@ -121,8 +137,11 @@ const MemberForm = ({
   submitLabel: string;
   submitting: boolean;
   error: string;
+  /** Show the "Account Access" (invite vs. credentials) section — Add only. */
+  showProvisioning?: boolean;
 }) => {
   const [form, setForm] = useState<FormState>(initial);
+  const [showPassword, setShowPassword] = useState(false);
   const set = (field: keyof FormState, value: string) => setForm((p) => ({ ...p, [field]: value }));
 
   const typeOptions = ALL_MEMBER_TYPES.map((t) => ({ value: t, label: MEMBER_TYPE_LABELS[t] }));
@@ -146,6 +165,68 @@ const MemberForm = ({
               <FieldSelect value={form.memberType} onChange={(v) => set("memberType", v)} options={typeOptions} placeholder="Select member type" />
             </FormField>
           </div>
+
+          {/* Account Access — only when adding a new member */}
+          {showProvisioning && (
+            <div className="relative border border-gray-200 rounded-2xl p-6 mb-6">
+              <span className="absolute -top-3 left-4 bg-white px-2 text-sm font-semibold text-gray-700">Account Access</span>
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, provisionMode: "invite" }))}
+                    className={`text-left rounded-xl border p-4 transition-colors ${form.provisionMode === "invite" ? "border-violet-400 bg-violet-50 ring-2 ring-violet-200" : "border-gray-200 hover:border-gray-300"}`}
+                  >
+                    <span className="block text-sm font-semibold text-gray-800">Email an invite link</span>
+                    <span className="block text-xs text-gray-500 mt-1">The member sets their own password from a link.</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((p) => ({ ...p, provisionMode: "credentials" }))}
+                    className={`text-left rounded-xl border p-4 transition-colors ${form.provisionMode === "credentials" ? "border-violet-400 bg-violet-50 ring-2 ring-violet-200" : "border-gray-200 hover:border-gray-300"}`}
+                  >
+                    <span className="block text-sm font-semibold text-gray-800">Set a password now</span>
+                    <span className="block text-xs text-gray-500 mt-1">Account is active immediately; share the credentials.</span>
+                  </button>
+                </div>
+
+                {form.provisionMode === "credentials" && (
+                  <FormField label="Password:">
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <FieldInput
+                          type={showPassword ? "text" : "password"}
+                          value={form.password}
+                          onChange={(e) => set("password", e.target.value)}
+                          placeholder="Leave blank to auto-generate"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((s) => !s)}
+                        className="px-3 py-2.5 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                      >
+                        {showPassword ? "Hide" : "Show"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { set("password", generatePassword()); setShowPassword(true); }}
+                        className="px-3 py-2.5 text-xs font-semibold text-white bg-violet-400 rounded-lg hover:bg-violet-500 transition-colors whitespace-nowrap"
+                      >
+                        Generate
+                      </button>
+                    </div>
+                  </FormField>
+                )}
+
+                <p className="text-xs text-gray-400">
+                  {form.provisionMode === "credentials"
+                    ? "An email address is still required — the member signs in with it."
+                    : "An email address is required so we can send the invite link."}
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Personal Profile */}
           <div className="relative border border-gray-200 rounded-2xl p-6 mb-6">
@@ -446,11 +527,14 @@ export default function MembersListPage() {
   const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [inviteResult, setInviteResult] = useState<CreateInvitationResponse | null>(null);
 
-  // Filters
+  // Filters (all applied server-side)
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState(searchParams.get("type") ?? "");
   const [groupFilter, setGroupFilter] = useState("");
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const perPage = 25;
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
@@ -458,42 +542,66 @@ export default function MembersListPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const loadData = useCallback(async () => {
+  // Debounce the search box → reset to page 1 when it settles.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const loadGroups = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      setGroups(await api.getGroups(token));
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const loadMembers = useCallback(async () => {
     const token = getToken();
     if (!token) { router.push("/auth/login"); return; }
     setLoading(true);
     try {
-      const [membersData, groupsData] = await Promise.all([
-        api.getMembers(token),
-        api.getGroups(token),
-      ]);
-      setMembers(membersData);
-      setGroups(groupsData);
+      const res = await api.getOrgProfilesPaginated(token, {
+        page,
+        page_size: perPage,
+        role: typeFilter || undefined,
+        group_id: groupFilter ? parseInt(groupFilter) : undefined,
+        search: debouncedSearch || undefined,
+      });
+      setMembers(res.data);
+      setTotal(res.total);
+      setTotalPages(Math.max(1, res.total_pages));
     } catch { showToast("Failed to load members", "error"); }
     finally { setLoading(false); }
-  }, [router]);
+  }, [router, page, typeFilter, groupFilter, debouncedSearch]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  // Reload the current page whenever page/filters/search change.
+  useEffect(() => { loadMembers(); }, [loadMembers]);
+  // Groups are needed once for the filter dropdown + group column.
+  useEffect(() => { loadGroups(); }, [loadGroups]);
 
-  // Client-side filtering
-  const filtered = members.filter((m) => {
-    const matchSearch = m.name.toLowerCase().includes(search.toLowerCase()) ||
-      m.email.toLowerCase().includes(search.toLowerCase());
-    const matchType = !typeFilter || m.member_type === typeFilter;
-    const matchGroup = !groupFilter || m.groups?.some((g) => String(g.id) === groupFilter);
-    return matchSearch && matchType && matchGroup;
-  });
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const paginated = filtered.slice((page - 1) * perPage, page * perPage);
+  // Full refresh used by the Refresh button and after add/edit/delete.
+  const loadData = useCallback(async () => {
+    await Promise.all([loadMembers(), loadGroups()]);
+  }, [loadMembers, loadGroups]);
 
   // ── Handlers ──────────────────────────────────────────────
 
-  // Add → invitation-based (looks up role_id from the member type slug)
+  // Add → invitation OR direct credentials, based on f.provisionMode.
   const handleAdd = async (f: FormState) => {
     if (!f.memberType) { setFormError("Member type is required."); return; }
     if (!f.name.trim()) { setFormError("Name is required."); return; }
-    if (!f.email.trim()) { setFormError("Email is required to send the invitation."); return; }
+    if (!f.email.trim()) {
+      setFormError(
+        f.provisionMode === "credentials"
+          ? "Email is required — the member signs in with it."
+          : "Email is required to send the invitation."
+      );
+      return;
+    }
     const token = getToken(); if (!token) return;
     setSubmitting(true); setFormError("");
     try {
@@ -506,16 +614,22 @@ export default function MembersListPage() {
         setFormError(`No role found for "${f.memberType}". Please add matching roles in Admin → Roles.`);
         return;
       }
-      const result = await api.createMember(token, {
+      const result = await api.createInvitation(token, {
         name: f.name.trim(),
         email: f.email.trim(),
         role_id: matchingRole.id,
+        mode: f.provisionMode,
+        password:
+          f.provisionMode === "credentials" && f.password ? f.password : undefined,
+        profile: buildProfilePayload(f),
+        group_id: f.groupId ? parseInt(f.groupId) : undefined,
       });
       await loadData();
       setInviteResult(result);
-      showToast("Invitation sent!");
-    } catch (err: unknown) { setFormError(err instanceof Error ? err.message : "Failed to send invitation."); }
-    finally { setSubmitting(false); }
+      showToast(f.provisionMode === "credentials" ? "Member account created!" : "Invitation sent!");
+    } catch (err: unknown) {
+      setFormError(err instanceof Error ? err.message : "Failed to add member.");
+    } finally { setSubmitting(false); }
   };
 
   // Profile-only fields (user_profiles table) — sent to PATCH /teams/profiles/:userId
@@ -577,8 +691,11 @@ export default function MembersListPage() {
   // ── Render ────────────────────────────────────────────────
 
   if (view === "add") {
-    // ── Success — show invite link ──────────────────────────
+    // ── Success — invite link OR created credentials ────────
     if (inviteResult) {
+      const created = inviteResult.mode === "credentials";
+      const displayName = created ? inviteResult.user?.name : inviteResult.invitation?.name;
+      const displayEmail = created ? inviteResult.user?.email : inviteResult.invitation?.email;
       return (
         <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 max-w-md w-full">
@@ -588,9 +705,11 @@ export default function MembersListPage() {
                   <path d="M22 2 11 13" /><path d="M22 2 15 22 11 13 2 9l20-7z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-gray-800">Invitation Sent!</h2>
+              <h2 className="text-xl font-semibold text-gray-800">
+                {created ? "Account Created!" : "Invitation Sent!"}
+              </h2>
               <p className="text-sm text-gray-500 mt-1">
-                <strong>{inviteResult.invitation.name}</strong> ({inviteResult.invitation.email}) has been invited as <strong>{inviteResult.role.name}</strong>.
+                <strong>{displayName}</strong> ({displayEmail}) {created ? "was added" : "has been invited"} as <strong>{inviteResult.role.name}</strong>.
               </p>
               {inviteResult.email_warning && (
                 <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl text-left">
@@ -599,35 +718,68 @@ export default function MembersListPage() {
               )}
             </div>
 
-            <div className="mb-6">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                Shareable invite link
-              </p>
-              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                <span className="text-xs text-gray-600 flex-1 break-all leading-relaxed">
-                  {inviteResult.invite_link}
-                </span>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(inviteResult.invite_link);
-                    showToast("Link copied!");
-                  }}
-                  className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
-                >
-                  Copy
-                </button>
+            {created ? (
+              <div className="mb-6">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Login credentials
+                </p>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                    <span className="text-xs text-gray-400 w-16 flex-shrink-0">Email</span>
+                    <span className="text-xs text-gray-700 flex-1 break-all">{displayEmail}</span>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(displayEmail ?? ""); showToast("Email copied!"); }}
+                      className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                    <span className="text-xs text-gray-400 w-16 flex-shrink-0">Password</span>
+                    <span className="text-xs font-mono text-gray-700 flex-1 break-all">{inviteResult.password}</span>
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(inviteResult.password ?? ""); showToast("Password copied!"); }}
+                      className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Share these with the member — this password won&apos;t be shown again. They can sign in right away.
+                </p>
               </div>
-              <p className="text-xs text-gray-400 mt-1.5">
-                Share this link with the member if the email didn't arrive. They'll use it to set their password.
-              </p>
-            </div>
+            ) : (
+              <div className="mb-6">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Shareable invite link
+                </p>
+                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
+                  <span className="text-xs text-gray-600 flex-1 break-all leading-relaxed">
+                    {inviteResult.invite_link}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(inviteResult.invite_link ?? "");
+                      showToast("Link copied!");
+                    }}
+                    className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Share this link with the member if the email didn&apos;t arrive. They&apos;ll use it to set their password.
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-3">
               <button
                 onClick={() => { setInviteResult(null); setFormError(""); }}
                 className="flex-1 py-2.5 bg-violet-400 hover:bg-violet-500 text-white text-sm font-semibold rounded-xl transition-colors"
               >
-                Invite Another
+                Add Another
               </button>
               <button
                 onClick={() => { setInviteResult(null); setView("list"); }}
@@ -642,7 +794,7 @@ export default function MembersListPage() {
     }
 
     // ── Form ────────────────────────────────────────────────
-    return <MemberForm initial={emptyForm()} groups={groups} onBack={() => { setView("list"); setFormError(""); setInviteResult(null); }} onSubmit={handleAdd} title="Add Member" submitLabel="SEND INVITE" submitting={submitting} error={formError} />;
+    return <MemberForm initial={emptyForm()} groups={groups} onBack={() => { setView("list"); setFormError(""); setInviteResult(null); }} onSubmit={handleAdd} title="Add Member" submitLabel="CREATE MEMBER" submitting={submitting} error={formError} showProvisioning />;
   }
 
   if (view === "edit" && editingMember) {
@@ -700,7 +852,7 @@ export default function MembersListPage() {
             <div className="flex flex-wrap gap-3 mb-5">
               <input
                 value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by name or email…"
                 className="flex-1 min-w-[200px] border border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-gray-50 focus:outline-none focus:ring-2 focus:ring-violet-300"
               />
@@ -726,9 +878,9 @@ export default function MembersListPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginated.length === 0 ? (
+                    {members.length === 0 ? (
                       <tr><td colSpan={5} className="text-center py-12 text-gray-400">No members found</td></tr>
-                    ) : paginated.map((m, i) => (
+                    ) : members.map((m, i) => (
                       <tr key={m.id} className={`border-b border-gray-50 hover:bg-violet-50/40 transition-colors ${i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}>
                         <td className="px-4 py-3 text-gray-500 text-xs">{fmt(m.created_at)}</td>
                         <td className="px-4 py-3">
@@ -771,7 +923,7 @@ export default function MembersListPage() {
             {/* Pagination */}
             <div className="flex items-center justify-between mt-5 flex-wrap gap-3">
               <p className="text-sm text-gray-500">
-                {filtered.length === 0 ? "No results" : `Showing ${(page - 1) * perPage + 1}–${Math.min(page * perPage, filtered.length)} of ${filtered.length}`}
+                {total === 0 ? "No results" : `Showing ${(page - 1) * perPage + 1}–${Math.min(page * perPage, total)} of ${total}`}
               </p>
               <div className="flex items-center gap-1">
                 {[

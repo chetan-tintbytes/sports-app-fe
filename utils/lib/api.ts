@@ -48,6 +48,9 @@ import {
   CreateRoleRequest,
   UpdateRoleRequest,
   CreateMemberRequest,
+  Paginated,
+  DownloadUrlResponse,
+  ViewUrlResponse,
 } from "../types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -297,6 +300,43 @@ export const api = {
       headers: authHeaders(token),
     });
     return handleResponse<{ videos: Video[] }>(response);
+  },
+
+  /**
+   * Admin-only: paginated list of every member's videos across the organisation.
+   * Each row includes uploader_name. Supports free-text search on video/uploader.
+   */
+  async getAllOrgVideos(
+    token: string,
+    params: { page: number; page_size: number; search?: string }
+  ): Promise<Paginated<Video>> {
+    const qs = new URLSearchParams();
+    qs.set("page", String(params.page));
+    qs.set("page_size", String(params.page_size));
+    if (params.search) qs.set("search", params.search);
+    const response = await fetch(`${API_URL}/admin/videos?${qs.toString()}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<Paginated<Video>>(response);
+  },
+
+  /** Admin-only: presigned attachment URL for downloading any org video. */
+  async downloadOrgVideo(
+    token: string,
+    id: number
+  ): Promise<DownloadUrlResponse> {
+    const response = await fetch(`${API_URL}/admin/videos/${id}/download`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<DownloadUrlResponse>(response);
+  },
+
+  /** Admin-only: presigned inline URL for streaming any org video in-browser. */
+  async viewOrgVideo(token: string, id: number): Promise<ViewUrlResponse> {
+    const response = await fetch(`${API_URL}/admin/videos/${id}/view`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<ViewUrlResponse>(response);
   },
 
   async getVideo(token: string, id: number): Promise<VideoDetail> {
@@ -624,6 +664,32 @@ export const api = {
     );
     const data = await handleResponse<UserProfile[]>(response);
     return data ?? [];
+  },
+
+  /**
+   * Server-side paginated + searchable profiles list.
+   * Returns a { data, total, page, page_size, total_pages } envelope.
+   */
+  async getOrgProfilesPaginated(
+    token: string,
+    params: {
+      page: number;
+      page_size: number;
+      role?: string;
+      group_id?: number;
+      search?: string;
+    }
+  ): Promise<Paginated<UserProfile>> {
+    const qs = new URLSearchParams();
+    qs.set("page", String(params.page));
+    qs.set("page_size", String(params.page_size));
+    if (params.role) qs.set("role", params.role);
+    if (params.group_id) qs.set("group_id", String(params.group_id));
+    if (params.search) qs.set("search", params.search);
+    const response = await fetch(`${API_URL}/teams/profiles?${qs.toString()}`, {
+      headers: authHeaders(token),
+    });
+    return handleResponse<Paginated<UserProfile>>(response);
   },
 
   /** @deprecated Use getOrgProfiles(). Kept for backward compat with org pages. */

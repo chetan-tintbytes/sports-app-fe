@@ -95,10 +95,21 @@ export interface Invitation {
   updated_at: string;
 }
 
+/** How a new member account is provisioned. */
+export type ProvisionMode = "invite" | "credentials";
+
 export interface CreateInvitationRequest {
   email: string;
   name: string;
   role_id: number;
+  /** "invite" (default) emails a link; "credentials" sets a password now. */
+  mode?: ProvisionMode;
+  /** Used only when mode === "credentials". If omitted, the server generates one. */
+  password?: string;
+  /** Profile details captured at creation time (measurements, sports, etc.). */
+  profile?: UpdateUserProfileRequest;
+  /** Optional group to assign the new member to. */
+  group_id?: number | null;
 }
 
 /**
@@ -112,10 +123,37 @@ export interface CreateMemberRequest {
 }
 
 export interface CreateInvitationResponse {
-  invitation: Invitation;
+  /** Which flow produced this response. */
+  mode?: ProvisionMode;
   role: Role;
-  invite_link: string;
+  // ── invite mode ──
+  invitation?: Invitation;
+  invite_link?: string;
   email_warning?: string;
+  // ── credentials mode ──
+  /** The newly created (active) member account. */
+  user?: User;
+  /** Plaintext password to share with the member. Returned once, never stored. */
+  password?: string;
+}
+
+/** Generic server-side pagination envelope. */
+export interface Paginated<T> {
+  data: T[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/** Response from the admin video download endpoint. */
+export interface DownloadUrlResponse {
+  download_url: string;
+}
+
+/** Response from the admin video view (inline streaming) endpoint. */
+export interface ViewUrlResponse {
+  view_url: string;
 }
 
 export interface AcceptInviteRequest {
@@ -175,6 +213,8 @@ export interface Video {
   updated_at: string;
   /** Populated by GET /videos/:id (org-aware) */
   uploader_name?: string;
+  /** Presigned inline URL for preview/thumbnail (populated by folder contents). */
+  view_url?: string;
 }
 
 export interface FolderContents {
