@@ -191,6 +191,25 @@ export const api = {
     return handleResponse<ProfileImagePresignResponse>(response);
   },
 
+  // ── Email Verification ───────────────────────────────────────────────────
+
+  async sendVerificationOTP(token: string): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/auth/email-verification/send`, {
+      method: "POST",
+      headers: authHeaders(token),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  async verifyEmailOTP(token: string, otp: string): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/auth/email-verification/verify`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ otp }),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
   // ── S3 direct upload ──────────────────────────────────────────────────────
 
   async uploadToS3(

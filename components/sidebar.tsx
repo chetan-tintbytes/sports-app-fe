@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Upload,
   Video,
@@ -12,6 +12,8 @@ import {
   X,
   ChevronDown,
   LogOut,
+  Mail,
+  ShieldCheck,
   LucideProps,
 } from "lucide-react";
 import Link from "next/link";
@@ -46,6 +48,24 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  // ── Email verification state ──────────────────────────────────────────────
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
+  const [verifyStep, setVerifyStep] = useState<"prompt" | "otp">("prompt");
+  const [otpValues, setOtpValues] = useState(["", "", "", "", "", ""]);
+  const [verifySending, setVerifySending] = useState(false);
+  const [verifySubmitting, setVerifySubmitting] = useState(false);
+  const [verifyError, setVerifyError] = useState("");
+  const [verifySuccess, setVerifySuccess] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Cooldown timer for resend button
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
   useEffect(() => {
     const fetchUser = async () => {
       const token = getToken();
@@ -56,6 +76,17 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
       try {
         const profile = await api.getProfile(token);
         setUser(profile);
+
+        // Show verification modal for non-admin members who haven't verified,
+        // but only once per browser session (sessionStorage is cleared on tab close).
+        if (
+          !profile.is_admin &&
+          !profile.email_verified &&
+          typeof window !== "undefined" &&
+          !sessionStorage.getItem("email_verify_dismissed")
+        ) {
+          setShowVerifyModal(true);
+        }
       } catch {
         removeToken();
         router.push("/login");
@@ -64,8 +95,109 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
     fetchUser();
   }, [router]);
 
+  const dismissVerifyModal = useCallback(() => {
+    setShowVerifyModal(false);
+    setVerifyStep("prompt");
+    setOtpValues(["", "", "", "", "", ""]);
+    setVerifyError("");
+    setVerifySuccess(false);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("email_verify_dismissed", "1");
+    }
+  }, []);
+
+  const handleSendOTP = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    setVerifySending(true);
+    setVerifyError("");
+    try {
+      await api.sendVerificationOTP(token);
+      setVerifyStep("otp");
+      setCooldown(60);
+      setOtpValues(["", "", "", "", "", ""]);
+      setTimeout(() => otpRefs.current[0]?.focus(), 100);
+    } catch (e: unknown) {
+      setVerifyError(e instanceof Error ? e.message : "Failed to send code");
+    } finally {
+      setVerifySending(false);
+    }
+  }, []);
+
+  const handleOtpChange = useCallback(
+    (index: number, value: string) => {
+      // Only allow digits
+      const digit = value.replace(/\D/g, "").slice(-1);
+      const next = [...otpValues];
+      next[index] = digit;
+      setOtpValues(next);
+      setVerifyError("");
+
+      // Auto-advance to next input
+      if (digit && index < 5) {
+        otpRefs.current[index + 1]?.focus();
+      }
+    },
+    [otpValues]
+  );
+
+  const handleOtpKeyDown = useCallback(
+    (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Backspace" && !otpValues[index] && index > 0) {
+        otpRefs.current[index - 1]?.focus();
+      }
+    },
+    [otpValues]
+  );
+
+  const handleOtpPaste = useCallback(
+    (e: React.ClipboardEvent<HTMLInputElement>) => {
+      e.preventDefault();
+      const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+      if (!pasted) return;
+      const next = ["", "", "", "", "", ""];
+      for (let i = 0; i < pasted.length; i++) next[i] = pasted[i];
+      setOtpValues(next);
+      // Focus the next empty or the last field
+      const focusIdx = Math.min(pasted.length, 5);
+      otpRefs.current[focusIdx]?.focus();
+    },
+    []
+  );
+
+  const handleVerifyOTP = useCallback(async () => {
+    const otp = otpValues.join("");
+    if (otp.length !== 6) {
+      setVerifyError("Please enter the full 6-digit code");
+      return;
+    }
+    const token = getToken();
+    if (!token) return;
+    setVerifySubmitting(true);
+    setVerifyError("");
+    try {
+      await api.verifyEmailOTP(token, otp);
+      setVerifySuccess(true);
+      // Update local user state
+      setUser((prev) => (prev ? { ...prev, email_verified: true } : prev));
+      // Close after a short delay
+      setTimeout(() => {
+        setShowVerifyModal(false);
+        setVerifyStep("prompt");
+        setVerifySuccess(false);
+      }, 2000);
+    } catch (e: unknown) {
+      setVerifyError(e instanceof Error ? e.message : "Verification failed");
+    } finally {
+      setVerifySubmitting(false);
+    }
+  }, [otpValues]);
+
   const handleLogout = () => {
     removeToken();
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("email_verify_dismissed");
+    }
     router.push("/login");
   };
 
@@ -289,6 +421,137 @@ export default function Sidebar({ children }: { children: React.ReactNode }) {
 
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
+
+      {/* ── Email Verification Modal ──────────────────────────────────────── */}
+      {showVerifyModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-violet-500 to-blue-500 px-6 py-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                  <Mail size={20} className="text-white" />
+                </div>
+                <div>
+                  <h2 className="text-white font-bold text-lg leading-tight">
+                    Verify your email
+                  </h2>
+                  <p className="text-white/70 text-xs mt-0.5">
+                    {user?.email}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={dismissVerifyModal}
+                className="text-white/60 hover:text-white transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5">
+              {verifySuccess ? (
+                <div className="text-center py-4">
+                  <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <ShieldCheck size={28} className="text-green-600" />
+                  </div>
+                  <p className="text-gray-800 font-semibold text-lg">
+                    Email verified!
+                  </p>
+                  <p className="text-gray-500 text-sm mt-1">
+                    Your email has been successfully verified.
+                  </p>
+                </div>
+              ) : verifyStep === "prompt" ? (
+                <>
+                  <p className="text-gray-600 text-sm leading-relaxed">
+                    Please verify your email address to secure your account.
+                    We&apos;ll send a 6-digit code to{" "}
+                    <strong className="text-gray-800">{user?.email}</strong>.
+                  </p>
+                  {verifyError && (
+                    <div className="mt-3 px-3 py-2 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg">
+                      {verifyError}
+                    </div>
+                  )}
+                  <div className="mt-5 flex gap-3">
+                    <button
+                      onClick={dismissVerifyModal}
+                      className="flex-1 py-2.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                    >
+                      Later
+                    </button>
+                    <button
+                      onClick={handleSendOTP}
+                      disabled={verifySending}
+                      className="flex-1 py-2.5 text-sm font-semibold text-white bg-violet-500 hover:bg-violet-600 disabled:opacity-60 rounded-xl transition-colors"
+                    >
+                      {verifySending ? "Sending…" : "Send Code"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-600 text-sm leading-relaxed mb-4">
+                    Enter the 6-digit code we sent to{" "}
+                    <strong className="text-gray-800">{user?.email}</strong>
+                  </p>
+
+                  {/* OTP Inputs */}
+                  <div className="flex justify-center gap-2.5 mb-4">
+                    {otpValues.map((val, i) => (
+                      <input
+                        key={i}
+                        ref={(el) => { otpRefs.current[i] = el; }}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={1}
+                        value={val}
+                        onChange={(e) => handleOtpChange(i, e.target.value)}
+                        onKeyDown={(e) => handleOtpKeyDown(i, e)}
+                        onPaste={i === 0 ? handleOtpPaste : undefined}
+                        className="w-12 h-14 text-center text-xl font-bold text-gray-800 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 transition-all"
+                      />
+                    ))}
+                  </div>
+
+                  {verifyError && (
+                    <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg text-center">
+                      {verifyError}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleVerifyOTP}
+                    disabled={verifySubmitting || otpValues.join("").length !== 6}
+                    className="w-full py-2.5 text-sm font-semibold text-white bg-violet-500 hover:bg-violet-600 disabled:opacity-60 rounded-xl transition-colors"
+                  >
+                    {verifySubmitting ? "Verifying…" : "Verify Email"}
+                  </button>
+
+                  {/* Resend */}
+                  <div className="mt-3 text-center">
+                    {cooldown > 0 ? (
+                      <p className="text-xs text-gray-400">
+                        Resend code in {cooldown}s
+                      </p>
+                    ) : (
+                      <button
+                        onClick={handleSendOTP}
+                        disabled={verifySending}
+                        className="text-xs text-violet-500 hover:text-violet-600 font-medium transition-colors"
+                      >
+                        {verifySending ? "Sending…" : "Resend code"}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

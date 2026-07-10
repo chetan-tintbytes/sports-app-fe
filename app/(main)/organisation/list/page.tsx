@@ -108,14 +108,6 @@ const memberToForm = (m: Member): FormState => ({
   provisionMode: "invite", password: "",
 });
 
-// Client-side strong password generator (unambiguous alphabet).
-const generatePassword = (len = 14): string => {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  const arr = new Uint32Array(len);
-  (window.crypto ?? crypto).getRandomValues(arr);
-  return Array.from(arr, (n) => alphabet[n % alphabet.length]).join("");
-};
-
 // ─── Member form (shared by Add & Edit) ──────────────────────────────────────
 
 const MemberForm = ({
@@ -141,7 +133,6 @@ const MemberForm = ({
   showProvisioning?: boolean;
 }) => {
   const [form, setForm] = useState<FormState>(initial);
-  const [showPassword, setShowPassword] = useState(false);
   const set = (field: keyof FormState, value: string) => setForm((p) => ({ ...p, [field]: value }));
 
   const typeOptions = ALL_MEMBER_TYPES.map((t) => ({ value: t, label: MEMBER_TYPE_LABELS[t] }));
@@ -170,61 +161,12 @@ const MemberForm = ({
           {showProvisioning && (
             <div className="relative border border-gray-200 rounded-2xl p-6 mb-6">
               <span className="absolute -top-3 left-4 bg-white px-2 text-sm font-semibold text-gray-700">Account Access</span>
-              <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setForm((p) => ({ ...p, provisionMode: "invite" }))}
-                    className={`text-left rounded-xl border p-4 transition-colors ${form.provisionMode === "invite" ? "border-violet-400 bg-violet-50 ring-2 ring-violet-200" : "border-gray-200 hover:border-gray-300"}`}
-                  >
-                    <span className="block text-sm font-semibold text-gray-800">Email an invite link</span>
-                    <span className="block text-xs text-gray-500 mt-1">The member sets their own password from a link.</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm((p) => ({ ...p, provisionMode: "credentials" }))}
-                    className={`text-left rounded-xl border p-4 transition-colors ${form.provisionMode === "credentials" ? "border-violet-400 bg-violet-50 ring-2 ring-violet-200" : "border-gray-200 hover:border-gray-300"}`}
-                  >
-                    <span className="block text-sm font-semibold text-gray-800">Set a password now</span>
-                    <span className="block text-xs text-gray-500 mt-1">Account is active immediately; share the credentials.</span>
-                  </button>
-                </div>
-
-                {form.provisionMode === "credentials" && (
-                  <FormField label="Password:">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1">
-                        <FieldInput
-                          type={showPassword ? "text" : "password"}
-                          value={form.password}
-                          onChange={(e) => set("password", e.target.value)}
-                          placeholder="Leave blank to auto-generate"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((s) => !s)}
-                        className="px-3 py-2.5 text-xs font-semibold text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                      >
-                        {showPassword ? "Hide" : "Show"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { set("password", generatePassword()); setShowPassword(true); }}
-                        className="px-3 py-2.5 text-xs font-semibold text-white bg-violet-400 rounded-lg hover:bg-violet-500 transition-colors whitespace-nowrap"
-                      >
-                        Generate
-                      </button>
-                    </div>
-                  </FormField>
-                )}
-
-                <p className="text-xs text-gray-400">
-                  {form.provisionMode === "credentials"
-                    ? "An email address is still required — the member signs in with it."
-                    : "An email address is required so we can send the invite link."}
-                </p>
-              </div>
+              <p className="text-sm text-gray-600">
+                We&apos;ll email this member a secure link to set their own password. Their account stays inactive and hidden from the member list until they do — the link is valid for 24 hours.
+              </p>
+              <p className="text-xs text-gray-400 mt-2">
+                A valid email address is required so we can send the link.
+              </p>
             </div>
           )}
 
@@ -590,16 +532,13 @@ export default function MembersListPage() {
 
   // ── Handlers ──────────────────────────────────────────────
 
-  // Add → invitation OR direct credentials, based on f.provisionMode.
+  // Add → create the member immediately (status "invited") and email a
+  // set-password link. The account activates once they set a password.
   const handleAdd = async (f: FormState) => {
     if (!f.memberType) { setFormError("Member type is required."); return; }
     if (!f.name.trim()) { setFormError("Name is required."); return; }
     if (!f.email.trim()) {
-      setFormError(
-        f.provisionMode === "credentials"
-          ? "Email is required — the member signs in with it."
-          : "Email is required to send the invitation."
-      );
+      setFormError("Email is required — we email the member a link to set their password.");
       return;
     }
     const token = getToken(); if (!token) return;
@@ -618,15 +557,12 @@ export default function MembersListPage() {
         name: f.name.trim(),
         email: f.email.trim(),
         role_id: matchingRole.id,
-        mode: f.provisionMode,
-        password:
-          f.provisionMode === "credentials" && f.password ? f.password : undefined,
         profile: buildProfilePayload(f),
         group_id: f.groupId ? parseInt(f.groupId) : undefined,
       });
       await loadData();
       setInviteResult(result);
-      showToast(f.provisionMode === "credentials" ? "Member account created!" : "Invitation sent!");
+      showToast("Member created — set-password email sent!");
     } catch (err: unknown) {
       setFormError(err instanceof Error ? err.message : "Failed to add member.");
     } finally { setSubmitting(false); }
@@ -657,12 +593,28 @@ export default function MembersListPage() {
     const token = getToken(); if (!token) return;
     setSubmitting(true); setFormError("");
     try {
-      // Run profile update and user-level (name/email) update in parallel
+      // Resolve the selected member type (a slug like "athlete") to a role_id so
+      // the change is actually persisted. Only send it when it changed.
+      let roleId: number | undefined;
+      if (f.memberType && f.memberType !== editingMember.member_type) {
+        const roles = await api.getRoles(token);
+        const matchingRole = roles.find(
+          (r) => r.name.toLowerCase().replace(/\s+/g, "_") === f.memberType
+        );
+        if (!matchingRole) {
+          setFormError(`No role found for "${f.memberType}". Please add a matching role in Admin → Roles.`);
+          return;
+        }
+        roleId = matchingRole.id;
+      }
+
+      // Run profile update and user-level (name/email/role) update in parallel
       await Promise.all([
         api.updateMember(token, editingMember.user_id, buildProfilePayload(f)),
         api.adminUpdateUser(token, editingMember.user_id, {
           name: f.name.trim() || undefined,
           email: f.email.trim() || undefined,
+          role_id: roleId,
         }),
       ]);
       if (f.groupId) {
@@ -691,11 +643,10 @@ export default function MembersListPage() {
   // ── Render ────────────────────────────────────────────────
 
   if (view === "add") {
-    // ── Success — invite link OR created credentials ────────
+    // ── Success — member created, set-password email sent ────────
     if (inviteResult) {
-      const created = inviteResult.mode === "credentials";
-      const displayName = created ? inviteResult.user?.name : inviteResult.invitation?.name;
-      const displayEmail = created ? inviteResult.user?.email : inviteResult.invitation?.email;
+      const displayName = inviteResult.user?.name;
+      const displayEmail = inviteResult.user?.email;
       return (
         <div className="min-h-screen bg-gray-50 p-6 flex items-center justify-center">
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 max-w-md w-full">
@@ -705,74 +656,22 @@ export default function MembersListPage() {
                   <path d="M22 2 11 13" /><path d="M22 2 15 22 11 13 2 9l20-7z" />
                 </svg>
               </div>
-              <h2 className="text-xl font-semibold text-gray-800">
-                {created ? "Account Created!" : "Invitation Sent!"}
-              </h2>
+              <h2 className="text-xl font-semibold text-gray-800">Member Created</h2>
               <p className="text-sm text-gray-500 mt-1">
-                <strong>{displayName}</strong> ({displayEmail}) {created ? "was added" : "has been invited"} as <strong>{inviteResult.role.name}</strong>.
+                <strong>{displayName}</strong> ({displayEmail}) was added as <strong>{inviteResult.role.name}</strong>.
               </p>
               {inviteResult.email_warning && (
                 <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl text-left">
-                  ⚠️ Email delivery warning: {inviteResult.email_warning}
+                  ⚠️ Email delivery warning: {inviteResult.email_warning} — the member won&apos;t receive the set-password link. Check your SMTP settings and try again.
                 </div>
               )}
             </div>
 
-            {created ? (
-              <div className="mb-6">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Login credentials
-                </p>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                    <span className="text-xs text-gray-400 w-16 flex-shrink-0">Email</span>
-                    <span className="text-xs text-gray-700 flex-1 break-all">{displayEmail}</span>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(displayEmail ?? ""); showToast("Email copied!"); }}
-                      className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                    <span className="text-xs text-gray-400 w-16 flex-shrink-0">Password</span>
-                    <span className="text-xs font-mono text-gray-700 flex-1 break-all">{inviteResult.password}</span>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(inviteResult.password ?? ""); showToast("Password copied!"); }}
-                      className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-400 mt-1.5">
-                  Share these with the member — this password won&apos;t be shown again. They can sign in right away.
-                </p>
-              </div>
-            ) : (
-              <div className="mb-6">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                  Shareable invite link
-                </p>
-                <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5">
-                  <span className="text-xs text-gray-600 flex-1 break-all leading-relaxed">
-                    {inviteResult.invite_link}
-                  </span>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(inviteResult.invite_link ?? "");
-                      showToast("Link copied!");
-                    }}
-                    className="flex-shrink-0 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <p className="text-xs text-gray-400 mt-1.5">
-                  Share this link with the member if the email didn&apos;t arrive. They&apos;ll use it to set their password.
-                </p>
-              </div>
-            )}
+            <div className="mb-6 p-4 bg-violet-50 border border-violet-100 rounded-xl">
+              <p className="text-sm text-gray-700">
+                We&apos;ve emailed <strong>{displayEmail}</strong> a link to set their password. The account stays hidden from the member list and can&apos;t sign in until they set it. The link is valid for 24 hours.
+              </p>
+            </div>
 
             <div className="flex gap-3">
               <button

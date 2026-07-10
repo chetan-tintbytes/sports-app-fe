@@ -122,8 +122,7 @@ const AddMemberForm = ({
   const [roles, setRoles] = useState<Role[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [inviteResult, setInviteResult] =
-    useState<CreateInvitationResponse | null>(null);
+  const [inviteResult, setInviteResult] = useState<CreateInvitationResponse | null>(null);
 
   const set = (field: keyof InviteFormState, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -131,25 +130,13 @@ const AddMemberForm = ({
   useEffect(() => {
     const token = getToken();
     if (!token) return;
-    api
-      .getRoles(token)
-      .then(setRoles)
-      .catch(() => {});
+    api.getRoles(token).then(setRoles).catch(() => {});
   }, []);
 
   const handleSubmit = async () => {
-    if (!form.roleId) {
-      setError("Role is required.");
-      return;
-    }
-    if (!form.name.trim()) {
-      setError("Name is required.");
-      return;
-    }
-    if (!form.email.trim()) {
-      setError("Email is required.");
-      return;
-    }
+    if (!form.roleId) { setError("Role is required."); return; }
+    if (!form.name.trim()) { setError("Name is required."); return; }
+    if (!form.email.trim()) { setError("Email is required."); return; }
     setError("");
     const token = getToken();
     if (!token) return;
@@ -162,18 +149,13 @@ const AddMemberForm = ({
       });
       setInviteResult(result);
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to send invitation.",
-      );
+      setError(err instanceof Error ? err.message : "Failed to send invitation.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const roleOptions = roles.map((r) => ({
-    value: String(r.id),
-    label: r.name,
-  }));
+  const roleOptions = roles.map((r) => ({ value: String(r.id), label: r.name }));
 
   // ── Success state ──
   if (inviteResult) {
@@ -182,14 +164,10 @@ const AddMemberForm = ({
         <div className="max-w-xl mx-auto">
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-8 text-center">
             <div className="text-4xl mb-4">✉️</div>
-            <h2 className="text-xl font-semibold text-gray-800 mb-2">
-              Invitation Sent!
-            </h2>
+            <h2 className="text-xl font-semibold text-gray-800 mb-2">Invitation Sent!</h2>
             <p className="text-sm text-gray-500 mb-6">
-              <strong>{inviteResult.invitation!.name}</strong> (
-              {inviteResult.invitation!.email}) has been invited as{" "}
-              <strong>{inviteResult.role.name}</strong>. They will receive a
-              link to set their password.
+              <strong>{inviteResult.invitation!.name}</strong> ({inviteResult.invitation!.email}) has been invited as{" "}
+              <strong>{inviteResult.role.name}</strong>. They will receive a link to set their password.
             </p>
             {inviteResult.email_warning && (
               <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded-xl text-left">
@@ -197,17 +175,11 @@ const AddMemberForm = ({
               </div>
             )}
             <div className="mb-6">
-              <p className="text-xs text-gray-500 mb-1 font-medium uppercase tracking-wide">
-                Invite link (share manually if needed)
-              </p>
+              <p className="text-xs text-gray-500 mb-1 font-medium uppercase tracking-wide">Invite link (share manually if needed)</p>
               <div className="flex items-center gap-2 bg-gray-100 rounded-xl px-3 py-2">
-                <span className="text-xs text-gray-600 flex-1 truncate">
-                  {inviteResult.invite_link}
-                </span>
+                <span className="text-xs text-gray-600 flex-1 truncate">{inviteResult.invite_link}</span>
                 <button
-                  onClick={() =>
-                    navigator.clipboard.writeText(inviteResult.invite_link!)
-                  }
+                  onClick={() => navigator.clipboard.writeText(inviteResult.invite_link!)}
                   className="text-violet-500 hover:text-violet-700 text-xs font-semibold flex-shrink-0"
                 >
                   Copy
@@ -216,10 +188,7 @@ const AddMemberForm = ({
             </div>
             <div className="flex gap-3 justify-center">
               <button
-                onClick={() => {
-                  setInviteResult(null);
-                  setForm(emptyForm());
-                }}
+                onClick={() => { setInviteResult(null); setForm(emptyForm()); }}
                 className="bg-violet-400 hover:bg-violet-500 text-white font-bold text-sm px-6 py-2.5 rounded-xl transition-colors shadow"
               >
                 Invite Another
@@ -246,14 +215,11 @@ const AddMemberForm = ({
         >
           ← Back
         </button>
-        <h1 className="text-2xl font-light text-gray-800 text-center mb-6">
-          Invite Member
-        </h1>
+        <h1 className="text-2xl font-light text-gray-800 text-center mb-6">Invite Member</h1>
 
         <p className="text-sm text-gray-500 text-center mb-6">
-          An invitation email will be sent. The member sets their own password
-          when they accept. Sports and physical data can be filled in on their
-          profile page after joining.
+          An invitation email will be sent. The member sets their own password when they accept.
+          Sports and physical data can be filled in on their profile page after joining.
         </p>
 
         {error && (
@@ -332,13 +298,7 @@ const DashboardView = ({
   const router = useRouter();
 
   const cards = [
-    {
-      id: "total",
-      label: "Total Members",
-      icon: "👥",
-      count: stats?.total ?? 0,
-      color: "teal",
-    },
+    { id: "total", label: "Total Members", icon: "👥", count: stats?.total ?? 0, color: "teal" },
     ...ALL_MEMBER_TYPES.map((t) => ({
       id: t,
       label: MEMBER_TYPE_LABELS[t],
@@ -351,9 +311,7 @@ const DashboardView = ({
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-5xl mx-auto">
-        <h1 className="text-2xl font-light text-gray-800 text-center mb-1">
-          My Organisation
-        </h1>
+        <h1 className="text-2xl font-light text-gray-800 text-center mb-1">My Organisation</h1>
         {orgName && (
           <p className="text-center text-gray-500 text-sm mb-6">{orgName}</p>
         )}
@@ -363,17 +321,8 @@ const DashboardView = ({
             onClick={onAddMember}
             className="flex items-center gap-2 bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold tracking-widest px-8 py-3.5 rounded-xl transition-colors shadow"
           >
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             ADD NEW MEMBER
           </button>
@@ -384,8 +333,7 @@ const DashboardView = ({
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {cards.map((card) => {
-              const colors =
-                colorMap[card.id] ?? "bg-pink-50 border-pink-100 text-rose-500";
+              const colors = colorMap[card.id] ?? "bg-pink-50 border-pink-100 text-rose-500";
               return (
                 <button
                   key={card.id}
@@ -398,9 +346,7 @@ const DashboardView = ({
                 >
                   <div className="text-2xl mb-2">{card.icon}</div>
                   <div className="text-3xl font-bold">{card.count}</div>
-                  <div className="text-xs font-medium mt-1 leading-tight">
-                    {card.label}
-                  </div>
+                  <div className="text-xs font-medium mt-1 leading-tight">{card.label}</div>
                 </button>
               );
             })}
@@ -420,10 +366,7 @@ export default function OrganisationDashboard() {
   const [groups, setGroups] = useState<OrgGroup[]>([]);
   const [orgName, setOrgName] = useState("");
   const [loading, setLoading] = useState(true);
-  const [toast, setToast] = useState<{
-    msg: string;
-    type: "success" | "error";
-  } | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToast({ msg, type });
@@ -432,10 +375,7 @@ export default function OrganisationDashboard() {
 
   const loadData = useCallback(async () => {
     const token = getToken();
-    if (!token) {
-      router.push("/auth/login");
-      return;
-    }
+    if (!token) { router.push("/auth/login"); return; }
     setLoading(true);
     try {
       const [statsData, groupsData, orgData] = await Promise.all([
@@ -453,9 +393,7 @@ export default function OrganisationDashboard() {
     }
   }, [router]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   if (view === "add") {
     return (

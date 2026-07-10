@@ -15,6 +15,7 @@ export interface User {
   role_name?: string;
   organisation_id?: number | null;
   status: UserStatus;
+  email_verified: boolean;
   created_at: string;
   updated_at: string;
 }
