@@ -3,8 +3,14 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/utils/lib/api";
-import { getToken } from "@/utils/lib/auth";
-import { User } from "@/utils/types";
+import { getToken, getUserId } from "@/utils/lib/auth";
+import {
+  User,
+  UserProfile,
+  UpdateUserProfileRequest,
+  PREDEFINED_SPORTS,
+  GENDERS,
+} from "@/utils/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +66,66 @@ const Row = ({
     <span className="text-sm text-gray-800">{value || "—"}</span>
   </div>
 );
+
+// A labelled input row used in edit mode.
+const EditRow = ({
+  label,
+  children,
+  required,
+}: {
+  label: string;
+  children: React.ReactNode;
+  required?: boolean;
+}) => (
+  <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-3 border-b border-gray-50 last:border-0">
+    <label className="text-xs text-gray-500 uppercase tracking-wide sm:w-40 flex-shrink-0">
+      {label}
+      {required && <span className="text-red-500 ml-0.5">*</span>}
+    </label>
+    <div className="flex-1">{children}</div>
+  </div>
+);
+
+const inputCls =
+  "w-full bg-gray-100 rounded-lg px-3.5 py-2.5 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-300 border-none";
+
+// ─── Edit state ───────────────────────────────────────────────────────────────
+
+interface EditState {
+  name: string;
+  dob: string;
+  gender: string;
+  phone: string;
+  mainSport: string;
+  otherSport: string;
+  height: string;
+  weight: string;
+  armSpan: string;
+  legLength: string;
+  shoeSize: string;
+  otherMetrics: { name: string; value: string }[];
+}
+
+const buildEditState = (user: User, p: UserProfile | null): EditState => ({
+  name: user.name ?? "",
+  dob: p?.date_of_birth ? p.date_of_birth.substring(0, 10) : "",
+  gender: p?.gender ?? "",
+  phone: p?.phone_no ?? "",
+  mainSport: p?.main_sports?.[0] ?? "",
+  otherSport: p?.other_sports?.[0] ?? "",
+  height: p?.height != null ? String(p.height) : "",
+  weight: p?.weight != null ? String(p.weight) : "",
+  armSpan: p?.arm_span != null ? String(p.arm_span) : "",
+  legLength: p?.leg_length != null ? String(p.leg_length) : "",
+  shoeSize: p?.shoe_size != null ? String(p.shoe_size) : "",
+  otherMetrics: [
+    ...Object.entries(p?.other_metrics ?? {}).map(([n, v]) => ({
+      name: n,
+      value: String(v),
+    })),
+    { name: "", value: "" },
+  ],
+});
 
 // ─── Profile Image Section ────────────────────────────────────────────────────
 
@@ -162,11 +228,12 @@ const ProfileImageSection = ({
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Edit state
   const [editMode, setEditMode] = useState(false);
-  const [editName, setEditName] = useState("");
+  const [edit, setEdit] = useState<EditState | null>(null);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
 
@@ -188,8 +255,22 @@ export default function ProfilePage() {
     }
     setLoading(true);
     try {
-      const profile = await api.getProfile(token);
-      setUser(profile);
+      const profileUser = await api.getProfile(token);
+      setUser(profileUser);
+
+      // Admins don't have a sports/physical profile — skip that record.
+      // For everyone else it lives in a separate record; load it best-effort.
+      if (profileUser.is_admin) {
+        setProfile(null);
+      } else {
+        try {
+          const uid = getUserId();
+          const sports = await api.getUserProfile(token, uid);
+          setProfile(sports);
+        } catch {
+          setProfile(null);
+        }
+      }
     } catch {
       showToast("Failed to load profile.", "error");
     } finally {
@@ -203,7 +284,7 @@ export default function ProfilePage() {
 
   const enterEdit = () => {
     if (!user) return;
-    setEditName(user.name);
+    setEdit(buildEditState(user, profile));
     setEditMode(true);
     setEditError("");
   };
@@ -213,8 +294,28 @@ export default function ProfilePage() {
     setEditError("");
   };
 
+  const setField = (field: keyof EditState, value: string) =>
+    setEdit((prev) => (prev ? { ...prev, [field]: value } : prev));
+
+  const setMetric = (idx: number, key: "name" | "value", value: string) =>
+    setEdit((prev) => {
+      if (!prev) return prev;
+      const metrics = prev.otherMetrics.map((m, i) =>
+        i === idx ? { ...m, [key]: value } : m
+      );
+      // Keep a trailing empty row so the user can always add another.
+      const last = metrics[metrics.length - 1];
+      if (last && (last.name.trim() || last.value.trim())) {
+        metrics.push({ name: "", value: "" });
+      }
+      return { ...prev, otherMetrics: metrics };
+    });
+
+  const numOrNull = (s: string) => (s.trim() ? parseFloat(s) : null);
+
   const handleSave = async () => {
-    if (!editName.trim()) {
+    if (!edit || !user) return;
+    if (!edit.name.trim()) {
       setEditError("Name cannot be empty.");
       return;
     }
@@ -223,10 +324,47 @@ export default function ProfilePage() {
     setSaving(true);
     setEditError("");
     try {
-      const updated = await api.updateProfile(token, { name: editName.trim() });
-      setUser(updated);
+      // Name lives on the user record; update it for everyone.
+      const updatedUser = await api.updateProfile(token, { name: edit.name.trim() });
+      setUser(updatedUser);
+
+      // Physical/sports fields only apply to non-admin users.
+      if (!user.is_admin) {
+        const otherMetrics = edit.otherMetrics
+          .filter((m) => m.name.trim())
+          .reduce<Record<string, string>>((acc, m) => {
+            acc[m.name.trim()] = m.value;
+            return acc;
+          }, {});
+
+        const sportsUpdate: UpdateUserProfileRequest = {
+          date_of_birth: edit.dob ? `${edit.dob}T00:00:00Z` : null,
+          gender: edit.gender || "",
+          phone_no: edit.phone || "",
+          main_sports: edit.mainSport ? [edit.mainSport] : [],
+          other_sports: edit.otherSport ? [edit.otherSport] : [],
+          height: numOrNull(edit.height),
+          weight: numOrNull(edit.weight),
+          arm_span: numOrNull(edit.armSpan),
+          leg_length: numOrNull(edit.legLength),
+          shoe_size: numOrNull(edit.shoeSize),
+          other_metrics: otherMetrics,
+        };
+
+        const uid = getUserId();
+        await api.updateUserProfile(token, uid, sportsUpdate);
+
+        // Reload the sports profile so the view reflects the saved values.
+        try {
+          const sports = await api.getUserProfile(token, uid);
+          setProfile(sports);
+        } catch {
+          /* keep previous profile if reload fails */
+        }
+      }
+
       setEditMode(false);
-      showToast("Name updated!");
+      showToast("Profile updated!");
     } catch (err: unknown) {
       setEditError(err instanceof Error ? err.message : "Failed to save.");
     } finally {
@@ -250,6 +388,9 @@ export default function ProfilePage() {
       </div>
     );
 
+  const groups = profile?.groups ?? [];
+  const roleName = user.is_admin ? "Administrator" : user.role_name || profile?.role_name || "—";
+
   return (
     <>
       {toast && <Toast msg={toast.msg} type={toast.type} />}
@@ -258,7 +399,7 @@ export default function ProfilePage() {
         <div className="max-w-2xl mx-auto">
           {/* Back button */}
           <button
-            onClick={() => router.back()}
+            onClick={() => router.push("/dashboard")}
             className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-800 mb-4 transition-colors"
           >
             ← Back
@@ -279,7 +420,7 @@ export default function ProfilePage() {
                   onClick={enterEdit}
                   className="bg-violet-400 hover:bg-violet-500 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors shadow"
                 >
-                  ✏ EDIT NAME
+                  ✏ EDIT PROFILE
                 </button>
               ) : (
                 <>
@@ -310,37 +451,275 @@ export default function ProfilePage() {
           {/* Profile Photo */}
           <ProfileImageSection user={user} onUpdate={setUser} showToast={showToast} />
 
-          {/* Account Info */}
+          {/* Account Details */}
           <Section title="Account Details">
             {!editMode ? (
+              <Row label="Name" value={user.name} />
+            ) : (
+              <EditRow label="Name" required>
+                <input
+                  value={edit?.name ?? ""}
+                  onChange={(e) => setField("name", e.target.value)}
+                  placeholder="Your name"
+                  className={inputCls}
+                />
+              </EditRow>
+            )}
+
+            <Row
+              label="Email"
+              value={
+                <span className="inline-flex items-center gap-2">
+                  {user.email}
+                  {user.email_verified ? (
+                    <span className="text-[10px] font-semibold text-green-600 bg-green-50 border border-green-200 rounded px-1.5 py-0.5">
+                      VERIFIED
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                      UNVERIFIED
+                    </span>
+                  )}
+                </span>
+              }
+            />
+            <Row label="Member Since" value={fmt(user.created_at)} />
+          </Section>
+
+          {/* Personal & Physical Details — not shown for admins */}
+          {!user.is_admin && (
+          <Section title="Personal & Physical Details">
+            {!editMode ? (
               <>
-                <Row label="Name" value={user.name} />
-                <Row label="Email" value={user.email} />
-                <Row label="Member Since" value={fmt(user.created_at)} />
+                <Row
+                  label="Date of Birth"
+                  value={profile?.date_of_birth ? fmt(profile.date_of_birth) : null}
+                />
+                <Row label="Gender" value={profile?.gender} />
+                <Row label="Phone" value={profile?.phone_no} />
+                <Row label="Main Sport" value={profile?.main_sports?.[0]} />
+                <Row label="Other Sport" value={profile?.other_sports?.[0]} />
+                <Row
+                  label="Height"
+                  value={profile?.height != null ? `${profile.height} cm` : null}
+                />
+                <Row
+                  label="Weight"
+                  value={profile?.weight != null ? `${profile.weight} kg` : null}
+                />
+                <Row
+                  label="Arm Span"
+                  value={profile?.arm_span != null ? `${profile.arm_span} cm` : null}
+                />
+                <Row
+                  label="Leg Length"
+                  value={profile?.leg_length != null ? `${profile.leg_length} cm` : null}
+                />
+                <Row
+                  label="Shoe Size"
+                  value={profile?.shoe_size != null ? String(profile.shoe_size) : null}
+                />
+                {Object.entries(profile?.other_metrics ?? {}).map(([k, v]) => (
+                  <Row key={k} label={k} value={String(v)} />
+                ))}
               </>
             ) : (
               <>
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-3 border-b border-gray-50">
-                  <label className="text-xs text-gray-500 uppercase tracking-wide sm:w-40 flex-shrink-0">
-                    Name <span className="text-red-500">*</span>
-                  </label>
+                <EditRow label="Date of Birth">
                   <input
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Your name"
-                    className="flex-1 bg-gray-100 rounded-lg px-3.5 py-2.5 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-300 border-none"
+                    type="date"
+                    value={edit?.dob ?? ""}
+                    onChange={(e) => setField("dob", e.target.value)}
+                    className={inputCls}
                   />
+                </EditRow>
+                <EditRow label="Gender">
+                  <select
+                    value={edit?.gender ?? ""}
+                    onChange={(e) => setField("gender", e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select…</option>
+                    {GENDERS.map((g) => (
+                      <option key={g} value={g}>
+                        {g}
+                      </option>
+                    ))}
+                  </select>
+                </EditRow>
+                <EditRow label="Phone">
+                  <input
+                    value={edit?.phone ?? ""}
+                    onChange={(e) => setField("phone", e.target.value)}
+                    placeholder="Phone number"
+                    className={inputCls}
+                  />
+                </EditRow>
+                <EditRow label="Main Sport">
+                  <select
+                    value={edit?.mainSport ?? ""}
+                    onChange={(e) => setField("mainSport", e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select…</option>
+                    {PREDEFINED_SPORTS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </EditRow>
+                <EditRow label="Other Sport">
+                  <select
+                    value={edit?.otherSport ?? ""}
+                    onChange={(e) => setField("otherSport", e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">Select…</option>
+                    {PREDEFINED_SPORTS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                </EditRow>
+                <EditRow label="Height (cm)">
+                  <input
+                    type="number"
+                    step="any"
+                    value={edit?.height ?? ""}
+                    onChange={(e) => setField("height", e.target.value)}
+                    placeholder="e.g. 178"
+                    className={inputCls}
+                  />
+                </EditRow>
+                <EditRow label="Weight (kg)">
+                  <input
+                    type="number"
+                    step="any"
+                    value={edit?.weight ?? ""}
+                    onChange={(e) => setField("weight", e.target.value)}
+                    placeholder="e.g. 72"
+                    className={inputCls}
+                  />
+                </EditRow>
+                <EditRow label="Arm Span (cm)">
+                  <input
+                    type="number"
+                    step="any"
+                    value={edit?.armSpan ?? ""}
+                    onChange={(e) => setField("armSpan", e.target.value)}
+                    placeholder="e.g. 180"
+                    className={inputCls}
+                  />
+                </EditRow>
+                <EditRow label="Leg Length (cm)">
+                  <input
+                    type="number"
+                    step="any"
+                    value={edit?.legLength ?? ""}
+                    onChange={(e) => setField("legLength", e.target.value)}
+                    placeholder="e.g. 95"
+                    className={inputCls}
+                  />
+                </EditRow>
+                <EditRow label="Shoe Size">
+                  <input
+                    type="number"
+                    step="any"
+                    value={edit?.shoeSize ?? ""}
+                    onChange={(e) => setField("shoeSize", e.target.value)}
+                    placeholder="e.g. 9"
+                    className={inputCls}
+                  />
+                </EditRow>
+
+                {/* Custom metrics */}
+                <div className="pt-3">
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">
+                    Other Metrics
+                  </p>
+                  <div className="space-y-2">
+                    {edit?.otherMetrics.map((m, i) => (
+                      <div key={i} className="flex gap-2">
+                        <input
+                          value={m.name}
+                          onChange={(e) => setMetric(i, "name", e.target.value)}
+                          placeholder="Metric name"
+                          className={inputCls}
+                        />
+                        <input
+                          value={m.value}
+                          onChange={(e) => setMetric(i, "value", e.target.value)}
+                          placeholder="Value"
+                          className={inputCls}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <Row label="Email" value={user.email} />
-                <Row label="Member Since" value={fmt(user.created_at)} />
               </>
             )}
           </Section>
+          )}
+
+          {/* Role & Groups (read-only) */}
+          <Section title="Role & Groups">
+            <Row label="Role" value={roleName} />
+            <Row
+              label="Groups"
+              value={
+                groups.length ? (
+                  <span className="flex flex-wrap gap-1.5">
+                    {groups.map((g) => (
+                      <span
+                        key={g.id}
+                        className="text-xs bg-violet-50 text-violet-700 border border-violet-200 rounded-full px-2.5 py-0.5"
+                      >
+                        {g.name}
+                      </span>
+                    ))}
+                  </span>
+                ) : null
+              }
+            />
+            <p className="text-xs text-gray-400 pt-2">
+              Role and group assignments are managed by your administrator.
+            </p>
+          </Section>
+
+          {/* Security */}
+          <Section title="Security">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-2.5 border-b border-gray-50">
+              <div>
+                <p className="text-sm font-medium text-gray-800">Password</p>
+                <p className="text-xs text-gray-400">Change the password you use to sign in.</p>
+              </div>
+              <button
+                onClick={() => router.push("/profile/change-password")}
+                className="bg-white border border-violet-300 text-violet-600 hover:bg-violet-50 text-xs font-bold px-4 py-2.5 rounded-xl transition-colors whitespace-nowrap"
+              >
+                CHANGE PASSWORD
+              </button>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-2.5">
+              <div>
+                <p className="text-sm font-medium text-gray-800">Email Address</p>
+                <p className="text-xs text-gray-400">
+                  Update your email — we&apos;ll verify the new address with a code.
+                </p>
+              </div>
+              <button
+                onClick={() => router.push("/profile/change-email")}
+                className="bg-white border border-violet-300 text-violet-600 hover:bg-violet-50 text-xs font-bold px-4 py-2.5 rounded-xl transition-colors whitespace-nowrap"
+              >
+                CHANGE EMAIL
+              </button>
+            </div>
+          </Section>
 
           {/* Meta */}
-          <div className="mt-2 text-xs text-gray-400">
-            Account ID: #{user.id}
-          </div>
+          <div className="mt-2 text-xs text-gray-400">Account ID: #{user.id}</div>
         </div>
       </div>
     </>

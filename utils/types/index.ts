@@ -59,6 +59,23 @@ export interface ResetPasswordRequest {
   password: string;
 }
 
+export interface ChangePasswordRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export interface SendEmailChangeRequest {
+  new_email: string;
+}
+
+/** Response from verifying an email-change OTP. A fresh token/user is returned
+ *  so the client can keep the session in sync with the new email. */
+export interface EmailChangeVerifyResponse {
+  message: string;
+  token?: string;
+  user?: User;
+}
+
 // ── Roles ──────────────────────────────────────────────────────────────────────
 
 export interface Role {

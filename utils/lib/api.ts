@@ -6,6 +6,8 @@ import {
   UpdateProfileRequest,
   ForgotPasswordRequest,
   ResetPasswordRequest,
+  ChangePasswordRequest,
+  EmailChangeVerifyResponse,
   FolderTree,
   FolderContents,
   Folder,
@@ -208,6 +210,50 @@ export const api = {
       body: JSON.stringify({ otp }),
     });
     return handleResponse<{ message: string }>(response);
+  },
+
+  // ── Change Password (authenticated) ───────────────────────────────────────
+
+  /** Change the current user's password. Requires the current password. */
+  async changePassword(
+    token: string,
+    data: ChangePasswordRequest
+  ): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/profile/change-password`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  // ── Change Email (authenticated, OTP-verified) ────────────────────────────
+
+  /** Send a 6-digit OTP to the NEW email address the user wants to switch to. */
+  async sendEmailChangeOTP(
+    token: string,
+    newEmail: string
+  ): Promise<{ message: string }> {
+    const response = await fetch(`${API_URL}/profile/email-change/send`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ new_email: newEmail }),
+    });
+    return handleResponse<{ message: string }>(response);
+  },
+
+  /** Verify the email-change OTP and commit the new address. Returns a fresh
+   *  token/user so the caller can update the stored session. */
+  async verifyEmailChangeOTP(
+    token: string,
+    otp: string
+  ): Promise<EmailChangeVerifyResponse> {
+    const response = await fetch(`${API_URL}/profile/email-change/verify`, {
+      method: "POST",
+      headers: authHeaders(token),
+      body: JSON.stringify({ otp }),
+    });
+    return handleResponse<EmailChangeVerifyResponse>(response);
   },
 
   // ── S3 direct upload ──────────────────────────────────────────────────────
